@@ -1,0 +1,69 @@
+# =========================
+# Dependencies
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# =========================
+# Build outputs
+# =========================
+dist/
+dist-ssr/
+build/
+.output/
+.vinxi/
+.nitro/
+.tanstack/
+
+# =========================
+# Environment variables
+# =========================
+.env
+.env.*
+!.env.example
+.dev.vars
+
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+
+# =========================
+# Python (if backend exists)
+# =========================
+__pycache__/
+*.pyc
+venv/
+.env
+
+# =========================
+# Cloudflare / Wrangler
+# =========================
+.wrangler/
+
+# =========================
+# IDE / Editors
+# =========================
+.vscode/
+!.vscode/extensions.json
+.idea/
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Misc
+# =========================
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
