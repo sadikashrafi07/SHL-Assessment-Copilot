@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 import logging
+import traceback
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from fastapi.concurrency import run_in_threadpool
 
 from app.models.schemas import (
     ChatRequest,
@@ -61,11 +63,10 @@ router = APIRouter()
 # =========================================================
 
 @router.get("/health")
-def health() -> dict:
+async def health() -> dict:
     return {
         "status": "ok"
     }
-
 
 # =========================================================
 # CHAT ENDPOINT
@@ -75,9 +76,11 @@ def health() -> dict:
     "/chat",
     response_model=ChatResponse,
 )
-def chat(
+async def chat(
     request: ChatRequest,
 ) -> ChatResponse:
+
+    logger.info("CHAT REQUEST STARTED")
 
     try:
 
@@ -86,6 +89,11 @@ def chat(
         # =================================================
 
         if not request.messages:
+
+            logger.warning(
+                "Empty messages payload received"
+            )
+
             return ChatResponse(
                 reply=(
                     "Please provide a hiring "
@@ -107,11 +115,16 @@ def chat(
         )
 
         logger.info(
-            "User message: %s",
+            "Latest user message: %s",
             latest_user_message,
         )
 
         if not latest_user_message:
+
+            logger.warning(
+                "Latest user message empty"
+            )
+
             return ChatResponse(
                 reply=(
                     "Please provide a valid "
@@ -128,8 +141,9 @@ def chat(
         if not is_safe_query(
             latest_user_message
         ):
+
             logger.warning(
-                "Unsafe query blocked."
+                "Unsafe query blocked"
             )
 
             return ChatResponse(
@@ -156,6 +170,11 @@ def chat(
         # =================================================
 
         if intent == "offtopic":
+
+            logger.info(
+                "Handled off-topic request"
+            )
+
             return ChatResponse(
                 reply=(
                     "I can help with SHL "
@@ -227,6 +246,10 @@ def chat(
 
             if not enough_context:
 
+                logger.info(
+                    "Clarification required"
+                )
+
                 question = (
                     generate_clarification_question(
                         clarification.get(
@@ -258,6 +281,11 @@ def chat(
         )
 
         if not search_query.strip():
+
+            logger.warning(
+                "Generated empty search query"
+            )
+
             return ChatResponse(
                 reply=(
                     "Please provide more details "
@@ -270,15 +298,18 @@ def chat(
 
         # =================================================
         # RETRIEVAL
-        # FIXED: REMOVED context=context
         # =================================================
 
-        raw_results = (
-            search_assessments(
-                query=search_query
-            )
-            or []
+        logger.info(
+            "Starting assessment retrieval"
         )
+
+        raw_results = await run_in_threadpool(
+            search_assessments,
+            search_query,
+        )
+
+        raw_results = raw_results or []
 
         logger.info(
             "Retrieved %s candidates",
@@ -286,46 +317,52 @@ def chat(
         )
 
         if not raw_results:
+
+            logger.warning(
+                "No retrieval results found"
+            )
+
             return ChatResponse(
                 reply=(
                     "I could not find sufficiently "
-                    "relevant SHL assessments.\n\n"
-                    "Try specifying:\n"
-                    "- exact role\n"
-                    "- seniority\n"
-                    "- technical stack\n"
-                    "- leadership requirements\n"
-                    "- communication needs\n"
-                    "- cognitive or personality focus"
+                    "relevant SHL assessments."
                 ),
                 recommendations=[],
                 end_of_conversation=False,
             )
 
         # =================================================
-        # RECOMMENDATION PIPELINE
+        # RECOMMENDATIONS
         # =================================================
 
-        recommendations = (
-            generate_recommendations(
-                results=raw_results,
-                query=search_query,
-                context=context,
-            )
-            or []
+        logger.info(
+            "Generating recommendations"
         )
 
+        recommendations = await run_in_threadpool(
+            generate_recommendations,
+            raw_results,
+            search_query,
+            context,
+        )
+
+        recommendations = recommendations or []
+
         logger.info(
-            "Final recommendations: %s",
+            "Generated %s recommendations",
             len(recommendations),
         )
 
         if not recommendations:
+
+            logger.warning(
+                "No valid recommendations generated"
+            )
+
             return ChatResponse(
                 reply=(
                     "I found possible matches, "
-                    "but none passed final "
-                    "quality validation."
+                    "but none passed final validation."
                 ),
                 recommendations=[],
                 end_of_conversation=False,
@@ -337,9 +374,14 @@ def chat(
 
         if intent == "comparison":
 
+            logger.info(
+                "Running comparison mode"
+            )
+
             comparison_reply = (
-                compare_assessments(
-                    recommendations
+                await run_in_threadpool(
+                    compare_assessments,
+                    recommendations,
                 )
             )
 
@@ -353,47 +395,40 @@ def chat(
         # LLM RESPONSE
         # =================================================
 
+        logger.info(
+            "Generating LLM response"
+        )
+
         try:
 
-            reply = (
-                generate_llm_response(
-                    user_query=latest_user_message,
-                    recommendations=recommendations,
-                    context=context,
-                    intent=intent,
-                )
+            reply = await run_in_threadpool(
+                generate_llm_response,
+                latest_user_message,
+                recommendations,
+                context,
+                intent,
             )
 
         except Exception as error:
 
             logger.exception(
-                "LLM response failed: %s",
+                "LLM generation failed: %s",
                 error,
             )
 
             top_names = [
-                item.get(
-                    "name",
-                    ""
-                )
+                item.get("name", "")
                 for item in recommendations[:3]
                 if item.get("name")
             ]
 
-            if top_names:
-                reply = (
-                    "I found relevant SHL "
-                    "assessments including: "
-                    f"{', '.join(top_names)}."
-                )
-            else:
-                reply = (
-                    "I found relevant SHL "
-                    "assessments for your query."
-                )
+            reply = (
+                f"I found relevant SHL assessments including: "
+                f"{', '.join(top_names)}."
+            )
 
         # =================================================
-        # END CONVERSATION DETECTION
+        # END DETECTION
         # =================================================
 
         end_of_conversation = (
@@ -403,12 +438,8 @@ def chat(
             )
         )
 
-        # =================================================
-        # FINAL RESPONSE
-        # =================================================
-
         logger.info(
-            "Chat response generated successfully."
+            "CHAT REQUEST COMPLETED SUCCESSFULLY"
         )
 
         return ChatResponse(
@@ -419,16 +450,15 @@ def chat(
 
     except Exception as error:
 
-        logger.exception(
-            "Chat endpoint failed: %s",
-            error,
+        logger.error(
+            "CHAT ENDPOINT CRASHED"
         )
 
-        return ChatResponse(
-            reply=(
-                "An internal error occurred "
-                "while processing the request."
-            ),
-            recommendations=[],
-            end_of_conversation=False,
+        logger.error(
+            traceback.format_exc()
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
         )
