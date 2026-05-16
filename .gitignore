@@ -115,3 +115,5 @@ Thumbs.db
 # =========================
 !data/cleaned_catalog.json
 !data/shl_product_catalog.json
+
+shl_env/
