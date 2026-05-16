@@ -41,15 +41,23 @@ async def lifespan(app: FastAPI):
 
     try:
         logger.info("Initializing SHL assessment database...")
+
         initialize_chroma()
-        logger.info("Chroma database initialized successfully")
+
+        logger.info(
+            "Chroma database initialized successfully"
+        )
 
     except Exception as error:
-        logger.exception(f"Startup initialization failed: {error}")
+        logger.exception(
+            "Startup initialization failed"
+        )
 
     yield
 
-    logger.info("Shutting down SHL Assessment API...")
+    logger.info(
+        "Shutting down SHL Assessment API..."
+    )
 
 
 # =========================================================
@@ -58,7 +66,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SHL Assessment Recommendation API",
-    description="Enterprise-grade SHL assessment recommendation and comparison API.",
+    description=(
+        "Enterprise-grade SHL assessment "
+        "recommendation and comparison API."
+    ),
     version="2.0.0",
     lifespan=lifespan,
 )
@@ -75,7 +86,11 @@ ALLOWED_ORIGINS = [
     "http://localhost:8081",
 
     # Production frontend
-    "https://shl-assessment-copilot.angadimohammadsadiq.workers.dev",
+    (
+        "https://"
+        "shl-assessment-copilot."
+        "angadimohammadsadiq.workers.dev"
+    ),
 ]
 
 app.add_middleware(
@@ -84,25 +99,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
-
-
-# =========================================================
-# 🔥 FIX 1: GLOBAL OPTIONS HANDLER (CRITICAL)
-# =========================================================
-
-@app.options("/{full_path:path}")
-async def global_options_handler(request: Request, full_path: str):
-
-    return JSONResponse(
-        content={"message": "OK"},
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "*",
-            "Access-Control-Allow-Headers": "*",
-        },
-    )
 
 
 # =========================================================
@@ -123,7 +120,10 @@ app.include_router(
 async def root():
 
     return {
-        "message": "SHL Assessment Recommendation API Running Successfully",
+        "message": (
+            "SHL Assessment Recommendation API "
+            "Running Successfully"
+        ),
         "version": "2.0.0",
         "status": "healthy",
     }
@@ -138,7 +138,9 @@ async def health():
 
     return {
         "status": "healthy",
-        "service": "SHL Assessment Recommendation API",
+        "service": (
+            "SHL Assessment Recommendation API"
+        ),
     }
 
 
@@ -147,14 +149,22 @@ async def health():
 # =========================================================
 
 @app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
+async def global_exception_handler(
+    request: Request,
+    exc: Exception,
+):
 
-    logger.exception(f"Unhandled exception: {exc}")
+    logger.exception(
+        f"Unhandled exception: {exc}"
+    )
 
     return JSONResponse(
         status_code=500,
         content={
             "error": "Internal server error",
-            "message": "Something went wrong while processing the request.",
+            "message": (
+                "Something went wrong while "
+                "processing the request."
+            ),
         },
     )
