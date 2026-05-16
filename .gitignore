@@ -59,11 +59,6 @@ dist-ssr/
 *.egg-info/
 
 # =========================
-# Database / Vector Store
-# =========================
-data/chroma_db/
-
-# =========================
 # Temporary / Cache Files
 # =========================
 .cache/
@@ -117,3 +112,4 @@ Thumbs.db
 !data/shl_product_catalog.json
 
 shl_env/
+Back-End/shl_env/
