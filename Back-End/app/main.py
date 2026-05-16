@@ -4,6 +4,7 @@
 # =========================================================
 
 import logging
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -25,7 +26,7 @@ logging.basicConfig(
         "%(levelname)s | "
         "%(name)s | "
         "%(message)s"
-    )
+    ),
 )
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,7 @@ app = FastAPI(
 
     version="2.0.0",
 
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 
@@ -94,17 +95,29 @@ app = FastAPI(
 # CORS CONFIGURATION
 # =========================================================
 
+ALLOWED_ORIGINS = [
+
+    # Local development
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:8080",
+    "http://localhost:8081",
+
+    # Production frontend
+    "https://shl-assessment-copilot.angadimohammadsadiq.workers.dev",
+]
+
 app.add_middleware(
 
     CORSMiddleware,
 
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
 
     allow_credentials=True,
 
     allow_methods=["*"],
 
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
 
 
@@ -114,7 +127,7 @@ app.add_middleware(
 
 app.include_router(
     chat_router,
-    prefix="/api"
+    prefix="/api",
 )
 
 
@@ -134,15 +147,15 @@ async def root():
 
         "version": "2.0.0",
 
-        "status": "healthy"
+        "status": "healthy",
     }
 
 
 # =========================================================
-# HEALTH CHECK
+# API HEALTH CHECK
 # =========================================================
 
-@app.get("/health")
+@app.get("/api/health")
 async def health():
 
     return {
@@ -151,7 +164,7 @@ async def health():
 
         "service": (
             "SHL Assessment Recommendation API"
-        )
+        ),
     }
 
 
@@ -162,7 +175,7 @@ async def health():
 @app.exception_handler(Exception)
 async def global_exception_handler(
     request,
-    exc
+    exc,
 ):
 
     logger.exception(
@@ -177,9 +190,10 @@ async def global_exception_handler(
             "error": (
                 "Internal server error"
             ),
+
             "message": (
                 "Something went wrong while "
                 "processing the request."
-            )
-        }
+            ),
+        },
     )
