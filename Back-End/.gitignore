@@ -1,9 +1,4 @@
 # =========================
-# Dependencies
-# =========================
-node_modules/
-
-# =========================
 # Python
 # =========================
 __pycache__/
@@ -11,12 +6,12 @@ __pycache__/
 *$py.class
 
 # =========================
-# Virtual Environments
+# Virtual Environment
 # =========================
+shl_env/
 venv/
 env/
 .venv/
-shl_env/
 
 # =========================
 # Environment Variables
@@ -24,52 +19,39 @@ shl_env/
 .env
 .env.*
 !.env.example
-.dev.vars
 
 # =========================
-# Logs
-# =========================
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-# =========================
-# Test / Coverage
+# Pytest / Coverage
 # =========================
 .pytest_cache/
 .coverage
 .coverage.*
-coverage.xml
 htmlcov/
+coverage.xml
+
+# =========================
+# VS Code / IDE
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# OS Files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Logs
+# =========================
+*.log
 
 # =========================
 # Build / Distribution
 # =========================
 build/
 dist/
-dist-ssr/
-.output/
-.vinxi/
-.nitro/
-.tanstack/
 *.egg-info/
-
-# =========================
-# Database / Vector Store
-# =========================
-data/chroma_db/
-
-# =========================
-# Temporary / Cache Files
-# =========================
-.cache/
-tmp/
-temp/
-*.tmp
 
 # =========================
 # Jupyter
@@ -77,38 +59,32 @@ temp/
 .ipynb_checkpoints/
 
 # =========================
-# Cloudflare / Wrangler
+# Database / Vector DB
 # =========================
-.wrangler/
+data/chroma_db/
 
 # =========================
-# IDE / Editors
+# Temporary Files
 # =========================
-.vscode/
-!.vscode/extensions.json
-.idea/
+tmp/
+temp/
+*.tmp
 
 # =========================
-# OS / System Files
+# Cache
 # =========================
-.DS_Store
-Thumbs.db
-.AppleDouble
-.LSOverride
-
-# =========================
-# Miscellaneous
-# =========================
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+.cache/
 
 # =========================
 # Render
 # =========================
 .render/
+
+# =========================
+# Mac Metadata
+# =========================
+.AppleDouble
+.LSOverride
 
 # =========================
 # Keep Important Data Files

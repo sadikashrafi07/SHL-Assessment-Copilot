@@ -1,0 +1,899 @@
+# =========================================================
+# app/services/conversation.py
+# Production-Grade Conversation Understanding Engine
+# =========================================================
+
+from __future__ import annotations
+
+import logging
+import re
+from datetime import datetime
+from typing import Any
+from uuid import uuid4
+
+from app.utils.helpers import normalize
+
+logger = logging.getLogger(__name__)
+
+# =========================================================
+# CONSTANTS
+# =========================================================
+
+COMPARISON_WORDS = {
+    "compare",
+    "comparison",
+    "difference",
+    "versus",
+    "vs",
+    "better than",
+    "alternative",
+}
+
+REFINEMENT_WORDS = {
+    "actually",
+    "instead",
+    "update",
+    "modify",
+    "change",
+    "replace",
+    "refine",
+}
+
+END_WORDS = {
+    "thanks",
+    "thank you",
+    "bye",
+    "done",
+    "goodbye",
+    "perfect",
+    "great",
+}
+
+OFFTOPIC_WORDS = {
+    "salary",
+    "crypto",
+    "investment",
+    "politics",
+    "hack",
+    "malware",
+    "exploit",
+    "torrent",
+}
+
+# =========================================================
+# ROLE TAXONOMY
+# =========================================================
+
+ROLE_PATTERNS = sorted(
+    [
+        # Product
+        "senior product manager",
+        "associate product manager",
+        "product manager",
+        "product owner",
+        "program manager",
+        "project manager",
+
+        # Engineering
+        "software engineer",
+        "software developer",
+        "backend engineer",
+        "backend developer",
+        "frontend engineer",
+        "frontend developer",
+        "full stack developer",
+        "full stack engineer",
+        "qa engineer",
+        "test engineer",
+        "devops engineer",
+        "cloud engineer",
+        "site reliability engineer",
+        "sre",
+        "data engineer",
+        "machine learning engineer",
+        "ai engineer",
+
+        # Analytics
+        "data scientist",
+        "data analyst",
+        "business analyst",
+
+        # Management
+        "engineering manager",
+        "marketing manager",
+        "sales manager",
+        "hr manager",
+        "scrum master",
+
+        # Design
+        "ux designer",
+        "ui designer",
+        "product designer",
+
+        # Generic
+        "developer",
+        "engineer",
+        "manager",
+        "analyst",
+        "designer",
+        "architect",
+        "intern",
+        "graduate",
+    ],
+    key=len,
+    reverse=True,
+)
+
+# =========================================================
+# SENIORITY
+# =========================================================
+
+SENIORITY_PATTERNS = [
+    "principal",
+    "staff",
+    "lead",
+    "senior",
+    "mid",
+    "junior",
+    "entry",
+    "associate",
+]
+
+# =========================================================
+# ASSESSMENT TYPES
+# =========================================================
+
+ASSESSMENT_TYPES = [
+    "technical",
+    "personality",
+    "behavioral",
+    "behavioural",
+    "cognitive",
+    "communication",
+    "leadership",
+    "coding",
+    "aptitude",
+    "situational",
+]
+
+# =========================================================
+# SKILLS
+# =========================================================
+
+SKILL_PATTERNS = sorted(
+    [
+        # Languages
+        "python",
+        "java",
+        "javascript",
+        "typescript",
+        "sql",
+        "scala",
+        "go",
+        "golang",
+        "rust",
+
+        # Frontend
+        "react",
+        "angular",
+        "vue",
+        "html",
+        "css",
+
+        # Backend
+        "spring boot",
+        "spring",
+        "nodejs",
+        "node",
+        "microservices",
+        "api",
+        "fastapi",
+        "django",
+        "flask",
+
+        # Cloud
+        "aws",
+        "azure",
+        "gcp",
+        "docker",
+        "kubernetes",
+        "terraform",
+
+        # Data
+        "tableau",
+        "power bi",
+        "analytics",
+        "machine learning",
+        "deep learning",
+        "data science",
+        "statistics",
+
+        # Product
+        "roadmap",
+        "product strategy",
+        "stakeholder management",
+        "stakeholder communication",
+        "stakeholder",
+        "strategy",
+        "execution",
+        "prioritization",
+
+        # Leadership
+        "leadership",
+        "communication",
+        "presentation",
+        "people management",
+
+        # AI
+        "artificial intelligence",
+        "generative ai",
+        "llm",
+        "ai",
+
+        # Domains
+        "backend",
+        "frontend",
+        "full stack",
+        "devops",
+        "cloud",
+    ],
+    key=len,
+    reverse=True,
+)
+
+# =========================================================
+# REGEX HELPERS
+# =========================================================
+
+def build_pattern(term: str) -> re.Pattern:
+    """
+    Safe whole-word regex pattern.
+    """
+
+    return re.compile(
+        rf"\b{re.escape(normalize(term))}\b",
+        flags=re.IGNORECASE,
+    )
+
+
+def regex_match(
+    term: str,
+    text: str,
+) -> bool:
+    """
+    Safe regex matching.
+    """
+
+    if not term or not text:
+        return False
+
+    return bool(
+        build_pattern(term).search(text)
+    )
+
+# =========================================================
+# NORMALIZATION
+# =========================================================
+
+def normalize_text(text: Any) -> str:
+    """
+    Normalize arbitrary text safely.
+    """
+
+    if text is None:
+        return ""
+
+    text = str(text)
+
+    text = normalize(text)
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    )
+
+    return text.strip()
+
+# =========================================================
+# MESSAGE HELPERS
+# =========================================================
+
+def get_latest_user_message(
+    messages: list[Any],
+) -> str:
+    """
+    Get latest user message safely.
+    """
+
+    for msg in reversed(messages):
+
+        role = (
+            msg.get("role")
+            if isinstance(msg, dict)
+            else getattr(msg, "role", "")
+        )
+
+        content = (
+            msg.get("content")
+            if isinstance(msg, dict)
+            else getattr(msg, "content", "")
+        )
+
+        if role == "user":
+            return str(content or "")
+
+    return ""
+
+
+def build_conversation_text(
+    messages: list[Any],
+) -> str:
+    """
+    Build normalized conversation text.
+    """
+
+    parts: list[str] = []
+
+    for msg in messages:
+
+        content = (
+            msg.get("content")
+            if isinstance(msg, dict)
+            else getattr(msg, "content", "")
+        )
+
+        if content:
+            parts.append(str(content))
+
+    return normalize_text(
+        " ".join(parts)
+    )
+
+# =========================================================
+# INTENT DETECTION
+# =========================================================
+
+def detect_intent(
+    messages: list[Any],
+) -> str:
+    """
+    Detect conversational intent.
+    """
+
+    latest = normalize_text(
+        get_latest_user_message(messages)
+    )
+
+    if not latest:
+        return "recommendation"
+
+    # Offtopic
+    if any(
+        regex_match(word, latest)
+        for word in OFFTOPIC_WORDS
+    ):
+        return "offtopic"
+
+    # Comparison
+    if (
+        " vs " in latest
+        or any(
+            regex_match(word, latest)
+            for word in COMPARISON_WORDS
+        )
+    ):
+        return "comparison"
+
+    # Refinement
+    if any(
+        latest.startswith(word)
+        for word in REFINEMENT_WORDS
+    ):
+        return "refinement"
+
+    return "recommendation"
+
+# =========================================================
+# EXTRACTION HELPERS
+# =========================================================
+
+def deduplicate(
+    items: list[str],
+) -> list[str]:
+    """
+    Deterministic deduplication.
+    """
+
+    return list(
+        dict.fromkeys(
+            normalize_text(x)
+            for x in items
+            if x
+        )
+    )
+
+
+def extract_roles(
+    text: str,
+) -> list[str]:
+    """
+    Extract role mentions.
+    """
+
+    text = normalize_text(text)
+
+    found: list[str] = []
+
+    for role in ROLE_PATTERNS:
+
+        if regex_match(role, text):
+            found.append(role)
+
+    return deduplicate(found)
+
+
+def extract_seniority(
+    text: str,
+) -> str | None:
+    """
+    Extract seniority level.
+    """
+
+    text = normalize_text(text)
+
+    for level in SENIORITY_PATTERNS:
+
+        if regex_match(level, text):
+            return level
+
+    return None
+
+
+def extract_assessment_types(
+    text: str,
+) -> list[str]:
+    """
+    Extract assessment types.
+    """
+
+    text = normalize_text(text)
+
+    found = []
+
+    for assessment_type in ASSESSMENT_TYPES:
+
+        if regex_match(
+            assessment_type,
+            text,
+        ):
+            found.append(assessment_type)
+
+    return deduplicate(found)
+
+
+def extract_skills(
+    text: str,
+) -> list[str]:
+    """
+    Extract technical + professional skills.
+    """
+
+    text = normalize_text(text)
+
+    found: list[str] = []
+
+    for skill in SKILL_PATTERNS:
+
+        if regex_match(skill, text):
+            found.append(skill)
+
+    return deduplicate(found)
+
+
+def extract_duration_constraint(
+    text: str,
+) -> int | None:
+    """
+    Extract duration limits.
+    """
+
+    text = normalize_text(text)
+
+    patterns = [
+        r"under (\d+)\s*(mins|minutes)",
+        r"less than (\d+)\s*(mins|minutes)",
+        r"within (\d+)\s*(mins|minutes)",
+        r"(\d+)\s*(mins|minutes) max",
+    ]
+
+    for pattern in patterns:
+
+        match = re.search(
+            pattern,
+            text,
+        )
+
+        if match:
+            return int(match.group(1))
+
+    return None
+
+
+def extract_experience(
+    text: str,
+) -> str | None:
+    """
+    Extract years of experience.
+    """
+
+    text = normalize_text(text)
+
+    match = re.search(
+        r"(\d+)\+?\s*(years|yrs|year)",
+        text,
+    )
+
+    if match:
+        return match.group(1)
+
+    return None
+
+
+def extract_comparison_targets(
+    text: str,
+) -> list[str]:
+    """
+    Extract comparison targets.
+    """
+
+    text = normalize_text(text)
+
+    if " vs " in text:
+
+        return deduplicate(
+            [
+                x.strip()
+                for x in text.split(" vs ")
+                if x.strip()
+            ]
+        )[:2]
+
+    match = re.search(
+        r"compare (.+?) and (.+)",
+        text,
+    )
+
+    if match:
+
+        return deduplicate(
+            [
+                match.group(1).strip(),
+                match.group(2).strip(),
+            ]
+        )[:2]
+
+    return []
+
+# =========================================================
+# CONTEXT EXTRACTION
+# =========================================================
+
+def extract_context(
+    messages: list[Any],
+) -> dict[str, Any]:
+    """
+    Extract structured conversation context.
+    """
+
+    text = build_conversation_text(
+        messages
+    )
+
+    latest_message = normalize_text(
+        get_latest_user_message(messages)
+    )
+
+    intent = detect_intent(messages)
+
+    roles = extract_roles(text)
+
+    # =====================================================
+    # AUTO ROLE INFERENCE
+    # =====================================================
+
+    if (
+        not roles
+        and regex_match(
+            "data scientist",
+            text,
+        )
+    ):
+        roles.append("data scientist")
+
+    context = {
+        "roles": deduplicate(roles),
+
+        "seniority":
+            extract_seniority(text),
+
+        "skills":
+            extract_skills(text),
+
+        "assessment_types":
+            extract_assessment_types(text),
+
+        "duration_limit":
+            extract_duration_constraint(text),
+
+        "experience":
+            extract_experience(text),
+
+        "remote_required":
+            regex_match(
+                "remote",
+                text,
+            ),
+
+        "adaptive_required":
+            regex_match(
+                "adaptive",
+                text,
+            ),
+
+        "leadership_required":
+            any(
+                regex_match(term, text)
+                for term in [
+                    "leadership",
+                    "manager",
+                    "management",
+                ]
+            ),
+
+        "communication_required":
+            any(
+                regex_match(term, text)
+                for term in [
+                    "communication",
+                    "stakeholder",
+                    "presentation",
+                ]
+            ),
+
+        "personality_required":
+            any(
+                regex_match(term, text)
+                for term in [
+                    "personality",
+                    "behavioral",
+                    "behavioural",
+                ]
+            ),
+
+        "cognitive_required":
+            any(
+                regex_match(term, text)
+                for term in [
+                    "cognitive",
+                    "reasoning",
+                    "analytical",
+                    "problem solving",
+                ]
+            ),
+
+        "comparison_targets":
+            [],
+
+        "raw_query":
+            latest_message,
+
+        "intent":
+            intent,
+    }
+
+    # =====================================================
+    # COMPARISON EXTRACTION
+    # =====================================================
+
+    if intent == "comparison":
+
+        context[
+            "comparison_targets"
+        ] = extract_comparison_targets(
+            latest_message
+        )
+
+    logger.info(
+        "Extracted context: %s",
+        context,
+    )
+
+    return context
+
+# =========================================================
+# CLARIFICATION
+# =========================================================
+
+def should_ask_clarification(
+    context: dict[str, Any],
+    messages: list[Any],
+) -> dict[str, Any]:
+    """
+    Determine whether clarification is needed.
+    """
+
+    has_signal = any(
+        [
+            context.get("roles"),
+            context.get("skills"),
+            context.get("assessment_types"),
+        ]
+    )
+
+    if has_signal:
+
+        return {
+            "needed": False,
+            "missing_fields": [],
+        }
+
+    # Avoid endless loops
+    if len(messages) >= 4:
+
+        return {
+            "needed": False,
+            "missing_fields": [],
+        }
+
+    return {
+        "needed": True,
+        "missing_fields": [
+            "role",
+            "skills",
+        ],
+    }
+
+
+def generate_clarification_question(
+    missing_fields: list[str],
+) -> str:
+    """
+    Generate clarification question.
+    """
+
+    return (
+        "What role are you hiring for, "
+        "and which technical or professional "
+        "skills are most important?"
+    )
+
+# =========================================================
+# SEARCH QUERY
+# =========================================================
+
+def build_search_query(
+    context: dict[str, Any],
+) -> str:
+    """
+    Build optimized retrieval query.
+    """
+
+    parts: list[str] = []
+
+    parts.extend(
+        context.get("roles", [])
+    )
+
+    if context.get("seniority"):
+
+        parts.append(
+            context["seniority"]
+        )
+
+    parts.extend(
+        context.get("skills", [])
+    )
+
+    parts.extend(
+        context.get(
+            "assessment_types",
+            [],
+        )
+    )
+
+    if context.get(
+        "leadership_required"
+    ):
+        parts.append("leadership")
+
+    if context.get(
+        "communication_required"
+    ):
+        parts.append("communication")
+
+    if context.get(
+        "personality_required"
+    ):
+        parts.append("personality")
+
+    if context.get(
+        "cognitive_required"
+    ):
+        parts.append("cognitive")
+
+    if context.get(
+        "adaptive_required"
+    ):
+        parts.append("adaptive")
+
+    if context.get(
+        "remote_required"
+    ):
+        parts.append("remote")
+
+    query = " ".join(
+        deduplicate(parts)
+    )
+
+    query = normalize_text(query)
+
+    logger.info(
+        "Final search query: %s",
+        query,
+    )
+
+    return query
+
+# =========================================================
+# END DETECTION
+# =========================================================
+
+def detect_conversation_end(
+    messages: list[Any],
+    recommendations: list[Any],
+) -> bool:
+    """
+    Detect whether conversation should end.
+    """
+
+    latest = normalize_text(
+        get_latest_user_message(messages)
+    )
+
+    return bool(
+        recommendations
+        and any(
+            regex_match(word, latest)
+            for word in END_WORDS
+        )
+    )
+
+# =========================================================
+# RESPONSE HELPERS
+# =========================================================
+
+def build_error_response(
+    message: str,
+) -> dict[str, Any]:
+    """
+    Standardized error response.
+    """
+
+    return {
+        "reply": message,
+
+        "recommendations": [],
+
+        "clarifications": [],
+
+        "metadata": {
+            "success": False,
+
+            "timestamp":
+                datetime.utcnow().isoformat(),
+
+            "conversation_id":
+                str(uuid4()),
+        },
+    }
