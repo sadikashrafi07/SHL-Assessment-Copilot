@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: shl-agent-backend
+    env: python
+    plan: free
+
+    rootDir: Back-End
+
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+
+      - key: ANONYMIZED_TELEMETRY
+        value: "False"
+
+      - key: HF_HOME
+        value: /opt/render/.cache/huggingface
+
+      - key: TRANSFORMERS_CACHE
+        value: /opt/render/.cache/huggingface
