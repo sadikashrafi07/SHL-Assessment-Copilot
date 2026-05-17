@@ -9,6 +9,9 @@ sentence-transformers==2.7.0
 rank-bm25==0.2.2
 rapidfuzz==3.9.6
 
+fastembed==0.8.0
+onnxruntime==1.22.0
+
 orjson==3.10.18
 ujson==5.10.0
 
