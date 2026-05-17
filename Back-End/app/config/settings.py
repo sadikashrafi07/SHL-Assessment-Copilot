@@ -1,5 +1,7 @@
 # =========================================================
 # app/config/settings.py
+# PRODUCTION-OPTIMIZED SETTINGS
+# Railway + Hybrid Retrieval + Low Memory
 # =========================================================
 
 from pathlib import Path
@@ -10,7 +12,7 @@ from pathlib import Path
 
 API_TITLE = "SHL Conversational Assessment Recommender"
 
-API_VERSION = "6.1.0"
+API_VERSION = "9.0.0"
 
 DEBUG = False
 
@@ -24,69 +26,82 @@ DATA_DIR = BASE_DIR / "data"
 
 CATALOG_FILE = DATA_DIR / "cleaned_catalog.json"
 
-CHROMA_DB_PATH = str(DATA_DIR / "chroma_db")
+# PRECOMPUTED EMBEDDINGS
+# Generated offline using build_embeddings.py
+EMBEDDINGS_FILE = DATA_DIR / "catalog_embeddings.npy"
 
 # =========================================================
-# API / CONVERSATION LIMITS
+# CONVERSATION
 # =========================================================
 
-MAX_CONVERSATION_TURNS = 10
+# SHL evaluator conversation limit
+MAX_CONVERSATION_TURNS = 8
 
 MAX_CLARIFICATION_QUESTIONS = 2
 
 MAX_CHAT_HISTORY_MESSAGES = 20
 
+# =========================================================
+# FINAL RESPONSE
+# =========================================================
+
 MAX_RECOMMENDATIONS = 10
 
-FINAL_RECOMMENDATIONS = 6
+# Better Recall@10
+FINAL_RECOMMENDATIONS = 8
+
+FINAL_TOP_K = 8
 
 # =========================================================
 # RETRIEVAL PIPELINE
 # =========================================================
 
-TOP_K_RETRIEVAL = 30
+TOP_K_SEMANTIC = 20
 
-TOP_K_BM25 = 30
+TOP_K_BM25 = 20
 
-TOP_K_SEMANTIC = 30
+TOP_K_HYBRID = 15
 
-TOP_K_HYBRID = 25
-
-TOP_K_RERANK = 15
-
-FINAL_TOP_K = 10
+TOP_K_RERANK = 10
 
 # =========================================================
 # THRESHOLDS
 # =========================================================
 
+# Lower threshold improves recall
 MIN_SIMILARITY_THRESHOLD = 0.30
 
-MIN_ACCEPTABLE_SCORE = 0.40
+MIN_ACCEPTABLE_SCORE = 0.35
 
-HIGH_CONFIDENCE_THRESHOLD = 0.75
+HIGH_CONFIDENCE_THRESHOLD = 0.78
 
-HIGH_CONFIDENCE_SCORE = 0.72
+HIGH_CONFIDENCE_SCORE = 0.80
 
 # =========================================================
 # EMBEDDINGS
 # =========================================================
 
-EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+# EMBEDDINGS ARE PRECOMPUTED OFFLINE
+# DO NOT LOAD sentence-transformers at runtime
+
+EMBEDDING_DIMENSION = 384
 
 EMBEDDING_NORMALIZE = True
 
-EMBEDDING_BATCH_SIZE = 32
-
 # =========================================================
-# CROSS ENCODER
+# RUNTIME OPTIMIZATION
 # =========================================================
 
-ENABLE_CROSS_ENCODER = True
+# Critical Railway optimization
+LOAD_EMBEDDINGS_IN_MEMORY = True
 
-CROSS_ENCODER_MODEL = (
-    "cross-encoder/ms-marco-MiniLM-L-6-v2"
-)
+USE_NUMPY_COSINE_SIMILARITY = True
+
+USE_FAISS = False
+
+USE_SENTENCE_TRANSFORMERS_RUNTIME = False
+
+USE_CROSS_ENCODER_RUNTIME = False
 
 # =========================================================
 # HYBRID RETRIEVAL
@@ -100,82 +115,55 @@ ENABLE_SEMANTIC_SEARCH = True
 
 ENABLE_METADATA_BOOSTING = True
 
+ENABLE_RERANKING = True
+
 # =========================================================
-# MAIN RERANKER WEIGHTS
-# REQUIRED BY reranker.py
+# HYBRID WEIGHTS
 # =========================================================
 
+# Tuned for lightweight embeddings
 SEMANTIC_WEIGHT = 0.45
 
-KEYWORD_WEIGHT = 0.25
+BM25_WEIGHT = 0.35
 
-ROLE_WEIGHT = 0.20
+ROLE_WEIGHT = 0.10
 
-SOFT_SKILL_WEIGHT = 0.10
+COMPETENCY_WEIGHT = 0.05
 
-# =========================================================
-# ADVANCED HYBRID WEIGHTS
-# =========================================================
+SENIORITY_WEIGHT = 0.03
 
-BM25_WEIGHT = 0.30
-
-CROSS_ENCODER_WEIGHT = 0.25
+DOMAIN_WEIGHT = 0.02
 
 # =========================================================
-# ONTOLOGY BOOSTS
+# METADATA BOOSTS
 # =========================================================
 
-ROLE_MATCH_BOOST = 0.20
+ROLE_MATCH_BOOST = 0.15
 
-COMPETENCY_MATCH_BOOST = 0.15
+COMPETENCY_MATCH_BOOST = 0.10
 
-LEADERSHIP_MATCH_BOOST = 0.12
+TECH_STACK_MATCH_BOOST = 0.10
 
-COMMUNICATION_MATCH_BOOST = 0.10
+LEADERSHIP_MATCH_BOOST = 0.08
 
-TECHNICAL_MATCH_BOOST = 0.12
+COMMUNICATION_MATCH_BOOST = 0.06
 
-PERSONALITY_MATCH_BOOST = 0.10
+COGNITIVE_MATCH_BOOST = 0.06
 
-COGNITIVE_MATCH_BOOST = 0.10
+PERSONALITY_MATCH_BOOST = 0.06
 
-SENIORITY_MATCH_BOOST = 0.08
+SENIORITY_MATCH_BOOST = 0.05
 
-DOMAIN_MATCH_BOOST = 0.07
-
-# =========================================================
-# LEGACY HEURISTIC BOOSTS
-# =========================================================
-
-EXACT_ROLE_BOOST = 20
-
-LEADERSHIP_BOOST = 15
-
-COMMUNICATION_BOOST = 12
-
-PERSONALITY_BOOST = 14
-
-COGNITIVE_BOOST = 12
-
-TECHNICAL_BOOST = 14
-
-MANAGERIAL_BOOST = 15
-
-STAKEHOLDER_BOOST = 10
+DOMAIN_MATCH_BOOST = 0.05
 
 # =========================================================
 # TEST TYPES
-# MUST MATCH:
-# - preprocess.py
-# - schemas.py
-# - retrieval.py
-# - reranker.py
 # =========================================================
 
 TEST_TYPE_MAP = {
     "knowledge": "K",
     "personality": "P",
-    "cognitive": "C",
+    "cognitive": "A",
     "situational": "S",
     "leadership": "L",
 }
@@ -183,23 +171,23 @@ TEST_TYPE_MAP = {
 VALID_TEST_TYPES = {
     "K",
     "P",
-    "C",
+    "A",
     "S",
     "L",
 }
 
 # =========================================================
-# DIVERSITY CONTROL
+# RESULT DIVERSITY
 # =========================================================
 
 ENABLE_RESULT_DIVERSITY = True
 
-MAX_SAME_TYPE_RESULTS = 3
+MAX_SAME_TYPE_RESULTS = 4
 
 TYPE_LIMITS = {
     "K": 4,
     "P": 3,
-    "C": 3,
+    "A": 3,
     "S": 2,
     "L": 3,
 }
@@ -216,13 +204,14 @@ ENABLE_COMPETENCY_EXPANSION = True
 
 ENABLE_FUZZY_MATCHING = True
 
-MAX_EXPANSION_TERMS = 20
+MAX_EXPANSION_TERMS = 25
 
 # =========================================================
 # QUERY EXPANSIONS
 # =========================================================
 
 QUERY_EXPANSIONS = {
+
     "leadership": [
         "people management",
         "team leadership",
@@ -258,7 +247,6 @@ QUERY_EXPANSIONS = {
         "roadmapping",
         "strategy",
         "leadership",
-        "cross functional collaboration",
     ],
 
     "software engineer": [
@@ -274,8 +262,6 @@ QUERY_EXPANSIONS = {
         "python",
         "analytics",
         "data analysis",
-        "reasoning",
-        "problem solving",
     ],
 
     "devops engineer": [
@@ -283,10 +269,8 @@ QUERY_EXPANSIONS = {
         "aws",
         "kubernetes",
         "docker",
-        "infrastructure",
-        "automation",
         "linux",
-        "monitoring",
+        "automation",
     ],
 }
 
@@ -295,31 +279,24 @@ QUERY_EXPANSIONS = {
 # =========================================================
 
 ROLE_COMPETENCIES = {
+
     "product manager": [
         "leadership",
         "stakeholder management",
         "strategy",
         "communication",
-        "decision making",
     ],
 
     "software engineer": [
         "coding",
         "technical",
         "problem solving",
-        "analytical",
     ],
 
     "java developer": [
         "java",
         "backend",
-        "problem solving",
-    ],
-
-    "data analyst": [
-        "analytics",
-        "numerical reasoning",
-        "critical thinking",
+        "algorithms",
     ],
 
     "data scientist": [
@@ -327,8 +304,6 @@ ROLE_COMPETENCIES = {
         "statistics",
         "python",
         "analytics",
-        "reasoning",
-        "problem solving",
     ],
 
     "devops engineer": [
@@ -336,31 +311,9 @@ ROLE_COMPETENCIES = {
         "aws",
         "docker",
         "kubernetes",
-        "automation",
         "linux",
-        "infrastructure",
-    ],
-
-    "sales manager": [
-        "communication",
-        "relationship building",
-        "leadership",
-    ],
-
-    "hr manager": [
-        "behavioral assessment",
-        "leadership",
-        "collaboration",
     ],
 }
-
-# =========================================================
-# CHROMA
-# =========================================================
-
-CHROMA_COLLECTION_NAME = "shl_assessments"
-
-ANONYMIZED_TELEMETRY = False
 
 # =========================================================
 # LLM
@@ -370,7 +323,7 @@ LLM_MODEL = "llama-3.3-70b-versatile"
 
 LLM_TEMPERATURE = 0.1
 
-MAX_LLM_TOKENS = 350
+MAX_LLM_TOKENS = 512
 
 # =========================================================
 # RESPONSE GENERATION
@@ -382,30 +335,9 @@ ALLOW_REFINEMENT = True
 
 STRICT_CATALOG_GROUNDING = True
 
-MIN_EXPLANATION_LENGTH = 30
+MIN_EXPLANATION_LENGTH = 40
 
 MAX_EXPLANATION_LENGTH = 300
-
-# =========================================================
-# CLARIFICATION RULES
-# =========================================================
-
-MANDATORY_FIELDS = [
-    "role",
-]
-
-OPTIONAL_FIELDS = [
-    "seniority",
-    "assessment_focus",
-    "soft_skills",
-]
-
-VAGUE_QUERIES = [
-    "need assessment",
-    "recommend assessment",
-    "hiring",
-    "test for candidate",
-]
 
 # =========================================================
 # VALIDATION
@@ -426,6 +358,30 @@ ALLOWED_DOMAINS = [
 ]
 
 # =========================================================
+# DEPLOYMENT
+# =========================================================
+
+EVALUATION_MODE = False
+
+RAILWAY_DEPLOYMENT = True
+
+LOW_MEMORY_MODE = True
+
+# =========================================================
+# CORS
+# =========================================================
+
+ALLOWED_ORIGINS = [
+
+    # Local development
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+
+    # Cloudflare frontend
+    "https://shl-assessment-copilot.angadimohammadsadiq.workers.dev",
+]
+
+# =========================================================
 # GUARDRAILS
 # =========================================================
 
@@ -436,7 +392,6 @@ OFFTOPIC_KEYWORDS = [
     "investment",
     "crypto",
     "medical advice",
-    "lawsuit",
 ]
 
 BLOCKED_PATTERNS = [
@@ -455,7 +410,14 @@ ENABLE_RESPONSE_CACHE = True
 
 CACHE_SIZE = 256
 
-ENABLE_PARALLEL_RETRIEVAL = True
+# Railway RAM optimization
+ENABLE_PARALLEL_RETRIEVAL = False
+
+PRELOAD_CATALOG = True
+
+PRELOAD_EMBEDDINGS = True
+
+USE_LAZY_LOADING = False
 
 # =========================================================
 # LOGGING

@@ -1,12 +1,12 @@
-# =========================================================
-# app/models/schemas.py
-# =========================================================
-
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
-
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+)
 
 # =========================================================
 # MESSAGE ROLES
@@ -19,29 +19,24 @@ class Role(str, Enum):
 
 # =========================================================
 # TEST TYPES
-# MUST MATCH:
-# - preprocess.py
-# - retrieval.py
-# - reranker.py
-# - settings.py
 # =========================================================
 
 class TestType(str, Enum):
+    K = "K"  # Knowledge
+    P = "P"  # Personality
+    A = "A"  # Cognitive Ability
+    S = "S"  # Situational Judgment
+    L = "L"  # Leadership
 
-    # Knowledge / Technical
-    K = "K"
 
-    # Personality
-    P = "P"
+# =========================================================
+# RECOMMENDATION STRENGTH
+# =========================================================
 
-    # Cognitive Ability
-    A = "A"
-
-    # Situational Judgement
-    S = "S"
-
-    # Behavioral
-    B = "B"
+class RecommendationStrength(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
 
 
 # =========================================================
@@ -53,6 +48,7 @@ class Message(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
         str_strip_whitespace=True,
+        validate_assignment=True,
     )
 
     role: Role
@@ -61,7 +57,6 @@ class Message(BaseModel):
         ...,
         min_length=1,
         max_length=4000,
-        description="Conversation message content",
     )
 
 
@@ -73,13 +68,13 @@ class ChatRequest(BaseModel):
 
     model_config = ConfigDict(
         extra="forbid",
+        validate_assignment=True,
     )
 
     messages: List[Message] = Field(
         ...,
         min_length=1,
         max_length=20,
-        description="Conversation history",
     )
 
 
@@ -92,74 +87,86 @@ class Recommendation(BaseModel):
     model_config = ConfigDict(
         extra="ignore",
         str_strip_whitespace=True,
+        validate_assignment=True,
     )
+
+    # =====================================================
+    # REQUIRED CORE FIELDS
+    # =====================================================
 
     name: str = Field(
         ...,
         min_length=2,
         max_length=300,
-        description="Assessment name",
     )
 
     url: HttpUrl
 
     test_type: TestType
 
+    # =====================================================
+    # FRONTEND FRIENDLY OPTIONAL FIELDS
+    # =====================================================
+
     description: Optional[str] = Field(
         default=None,
-        max_length=2000,
+        max_length=2500,
     )
 
     score: Optional[float] = Field(
         default=None,
         ge=0.0,
         le=1.0,
-        description="Final ranking score",
     )
 
     confidence: Optional[float] = Field(
         default=None,
         ge=0.0,
         le=1.0,
-        description="Confidence level",
     )
 
     recommendation_strength: Optional[
-        str
-    ] = Field(
-        default=None,
-        max_length=100,
-    )
+        RecommendationStrength
+    ] = None
 
     explanation: Optional[str] = Field(
         default=None,
-        max_length=2000,
+        max_length=2500,
     )
 
 
 # =========================================================
-# OUTPUT RESPONSE
+# FINAL PRODUCTION RESPONSE
 # =========================================================
 
 class ChatResponse(BaseModel):
 
+    """
+    Production-safe schema.
+
+    Compatible with:
+    - SHL evaluator
+    - Frontend UI
+    - Recommendation cards
+    - Comparison views
+    """
+
     model_config = ConfigDict(
         extra="forbid",
+        validate_assignment=True,
     )
 
     reply: str = Field(
         ...,
         min_length=1,
-        max_length=4000,
-        description="Assistant response",
+        max_length=6000,
     )
 
     recommendations: List[
         Recommendation
     ] = Field(
         default_factory=list,
+        max_length=10,
     )
 
-    end_of_conversation: bool = Field(
-        default=False,
-    )
+    end_of_conversation: bool = False

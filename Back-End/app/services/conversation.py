@@ -7,9 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
 from typing import Any
-from uuid import uuid4
 
 from app.utils.helpers import normalize
 
@@ -320,7 +318,13 @@ def get_latest_user_message(
             else getattr(msg, "content", "")
         )
 
-        if role == "user":
+        role_value = (
+            role.value
+            if hasattr(role, "value")
+            else str(role)
+        )
+
+        if role_value == "user":
             return str(content or "")
 
     return ""
@@ -368,14 +372,20 @@ def detect_intent(
     if not latest:
         return "recommendation"
 
-    # Offtopic
+    # =====================================================
+    # OFFTOPIC
+    # =====================================================
+
     if any(
         regex_match(word, latest)
         for word in OFFTOPIC_WORDS
     ):
         return "offtopic"
 
-    # Comparison
+    # =====================================================
+    # COMPARISON
+    # =====================================================
+
     if (
         " vs " in latest
         or any(
@@ -385,7 +395,10 @@ def detect_intent(
     ):
         return "comparison"
 
-    # Refinement
+    # =====================================================
+    # REFINEMENT
+    # =====================================================
+
     if any(
         latest.startswith(word)
         for word in REFINEMENT_WORDS
@@ -405,13 +418,16 @@ def deduplicate(
     Deterministic deduplication.
     """
 
-    return list(
-        dict.fromkeys(
-            normalize_text(x)
-            for x in items
-            if x
-        )
-    )
+    cleaned = []
+
+    for item in items:
+
+        value = normalize_text(item)
+
+        if value and value not in cleaned:
+            cleaned.append(value)
+
+    return cleaned
 
 
 def extract_roles(
@@ -611,23 +627,88 @@ def extract_context(
     ):
         roles.append("data scientist")
 
+    # =====================================================
+    # SKILLS
+    # =====================================================
+
+    skills = extract_skills(text)
+
+    # =====================================================
+    # FOCUS FLAGS
+    # =====================================================
+
+    leadership_required = any(
+        regex_match(term, text)
+        for term in [
+            "leadership",
+            "manager",
+            "management",
+            "team lead",
+        ]
+    )
+
+    communication_required = any(
+        regex_match(term, text)
+        for term in [
+            "communication",
+            "stakeholder",
+            "presentation",
+            "collaboration",
+        ]
+    )
+
+    personality_required = any(
+        regex_match(term, text)
+        for term in [
+            "personality",
+            "behavioral",
+            "behavioural",
+            "culture fit",
+        ]
+    )
+
+    cognitive_required = any(
+        regex_match(term, text)
+        for term in [
+            "cognitive",
+            "reasoning",
+            "analytical",
+            "problem solving",
+            "aptitude",
+        ]
+    )
+
     context = {
-        "roles": deduplicate(roles),
+
+        # =================================================
+        # PRIMARY SIGNALS
+        # =================================================
+
+        "roles":
+            deduplicate(roles),
 
         "seniority":
             extract_seniority(text),
 
         "skills":
-            extract_skills(text),
+            skills,
 
         "assessment_types":
             extract_assessment_types(text),
+
+        # =================================================
+        # CONSTRAINTS
+        # =================================================
 
         "duration_limit":
             extract_duration_constraint(text),
 
         "experience":
             extract_experience(text),
+
+        # =================================================
+        # FLAGS
+        # =================================================
 
         "remote_required":
             regex_match(
@@ -642,48 +723,27 @@ def extract_context(
             ),
 
         "leadership_required":
-            any(
-                regex_match(term, text)
-                for term in [
-                    "leadership",
-                    "manager",
-                    "management",
-                ]
-            ),
+            leadership_required,
 
         "communication_required":
-            any(
-                regex_match(term, text)
-                for term in [
-                    "communication",
-                    "stakeholder",
-                    "presentation",
-                ]
-            ),
+            communication_required,
 
         "personality_required":
-            any(
-                regex_match(term, text)
-                for term in [
-                    "personality",
-                    "behavioral",
-                    "behavioural",
-                ]
-            ),
+            personality_required,
 
         "cognitive_required":
-            any(
-                regex_match(term, text)
-                for term in [
-                    "cognitive",
-                    "reasoning",
-                    "analytical",
-                    "problem solving",
-                ]
-            ),
+            cognitive_required,
+
+        # =================================================
+        # COMPARISON
+        # =================================================
 
         "comparison_targets":
             [],
+
+        # =================================================
+        # RAW
+        # =================================================
 
         "raw_query":
             latest_message,
@@ -728,6 +788,10 @@ def should_ask_clarification(
             context.get("roles"),
             context.get("skills"),
             context.get("assessment_types"),
+            context.get("leadership_required"),
+            context.get("communication_required"),
+            context.get("cognitive_required"),
+            context.get("personality_required"),
         ]
     )
 
@@ -738,7 +802,10 @@ def should_ask_clarification(
             "missing_fields": [],
         }
 
-    # Avoid endless loops
+    # =====================================================
+    # AVOID INFINITE LOOPS
+    # =====================================================
+
     if len(messages) >= 4:
 
         return {
@@ -763,9 +830,10 @@ def generate_clarification_question(
     """
 
     return (
-        "What role are you hiring for, "
-        "and which technical or professional "
-        "skills are most important?"
+        "Could you share the target role, "
+        "seniority level, and key technical "
+        "or professional skills you want "
+        "to evaluate?"
     )
 
 # =========================================================
@@ -781,9 +849,17 @@ def build_search_query(
 
     parts: list[str] = []
 
+    # =====================================================
+    # ROLES
+    # =====================================================
+
     parts.extend(
         context.get("roles", [])
     )
+
+    # =====================================================
+    # SENIORITY
+    # =====================================================
 
     if context.get("seniority"):
 
@@ -791,9 +867,17 @@ def build_search_query(
             context["seniority"]
         )
 
+    # =====================================================
+    # SKILLS
+    # =====================================================
+
     parts.extend(
         context.get("skills", [])
     )
+
+    # =====================================================
+    # ASSESSMENT TYPES
+    # =====================================================
 
     parts.extend(
         context.get(
@@ -801,6 +885,10 @@ def build_search_query(
             [],
         )
     )
+
+    # =====================================================
+    # FOCUS SIGNALS
+    # =====================================================
 
     if context.get(
         "leadership_required"
@@ -822,6 +910,10 @@ def build_search_query(
     ):
         parts.append("cognitive")
 
+    # =====================================================
+    # DELIVERY
+    # =====================================================
+
     if context.get(
         "adaptive_required"
     ):
@@ -831,6 +923,16 @@ def build_search_query(
         "remote_required"
     ):
         parts.append("remote")
+
+    # =====================================================
+    # EXPERIENCE
+    # =====================================================
+
+    if context.get("experience"):
+
+        parts.append(
+            f"{context['experience']} years"
+        )
 
     query = " ".join(
         deduplicate(parts)
@@ -868,32 +970,3 @@ def detect_conversation_end(
             for word in END_WORDS
         )
     )
-
-# =========================================================
-# RESPONSE HELPERS
-# =========================================================
-
-def build_error_response(
-    message: str,
-) -> dict[str, Any]:
-    """
-    Standardized error response.
-    """
-
-    return {
-        "reply": message,
-
-        "recommendations": [],
-
-        "clarifications": [],
-
-        "metadata": {
-            "success": False,
-
-            "timestamp":
-                datetime.utcnow().isoformat(),
-
-            "conversation_id":
-                str(uuid4()),
-        },
-    }

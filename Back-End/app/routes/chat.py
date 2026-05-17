@@ -1,18 +1,25 @@
 # =========================================================
 # app/routes/chat.py
+# Production-Grade Enterprise Chat Endpoint
+# FULLY FIXED VERSION
 # =========================================================
 
 from __future__ import annotations
 
 import logging
+import time
 import traceback
+from typing import Any
+from typing import List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+from fastapi import HTTPException
 from fastapi.concurrency import run_in_threadpool
 
 from app.models.schemas import (
     ChatRequest,
     ChatResponse,
+    Recommendation,
 )
 
 from app.services.guardrails import (
@@ -21,21 +28,21 @@ from app.services.guardrails import (
 )
 
 from app.services.conversation import (
+    build_search_query,
+    detect_conversation_end,
     detect_intent,
     extract_context,
-    build_search_query,
-    should_ask_clarification,
     generate_clarification_question,
     get_latest_user_message,
-    detect_conversation_end,
-)
-
-from app.services.retrieval import (
-    search_assessments,
+    should_ask_clarification,
 )
 
 from app.services.recommendation import (
     generate_recommendations,
+)
+
+from app.services.retrieval import (
+    search_assessments,
 )
 
 from app.services.comparison import (
@@ -59,18 +66,351 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # =========================================================
-# HEALTH CHECK
+# HEALTH
 # =========================================================
+
 
 @router.get("/health")
 async def health() -> dict:
+
     return {
-        "status": "ok"
+        "status": "ok",
     }
+
+
+# =========================================================
+# SAFE FLOAT
+# =========================================================
+
+
+def safe_float(
+    value: Any,
+    default: float | None = None,
+) -> float | None:
+
+    try:
+
+        if value is None:
+            return default
+
+        value = float(value)
+
+        if value < 0:
+            return default
+
+        if value > 1:
+            return 1.0
+
+        return round(value, 4)
+
+    except Exception:
+
+        return default
+
+
+# =========================================================
+# NORMALIZE TEST TYPE
+# =========================================================
+
+
+def normalize_test_type(
+    value: Any,
+) -> str:
+
+    allowed = {
+        "K",
+        "P",
+        "A",
+        "S",
+        "L",
+    }
+
+    value = str(value or "K").upper().strip()
+
+    if value not in allowed:
+        return "K"
+
+    return value
+
+
+# =========================================================
+# NORMALIZE STRING LIST
+# =========================================================
+
+
+def normalize_string_list(
+    value: Any,
+) -> list[str]:
+
+    if not value:
+        return []
+
+    if isinstance(value, str):
+
+        value = [value]
+
+    if not isinstance(value, list):
+        return []
+
+    cleaned = []
+
+    for item in value:
+
+        item = str(item).strip()
+
+        if item:
+            cleaned.append(item)
+
+    return cleaned
+
+
+# =========================================================
+# NORMALIZE RECOMMENDATIONS
+# =========================================================
+
+
+def normalize_recommendations(
+    recommendations: list[Any],
+) -> List[Recommendation]:
+
+    """
+    Convert recommendation output into
+    strict Recommendation schema safely.
+    """
+
+    normalized: List[Recommendation] = []
+
+    seen_names = set()
+
+    for item in recommendations:
+
+        try:
+
+            # =====================================================
+            # ALREADY PYDANTIC MODEL
+            # =====================================================
+
+            if isinstance(
+                item,
+                Recommendation,
+            ):
+
+                normalized_name = (
+                    item.name.lower().strip()
+                )
+
+                if normalized_name in seen_names:
+                    continue
+
+                seen_names.add(
+                    normalized_name
+                )
+
+                normalized.append(item)
+
+                continue
+
+            # =====================================================
+            # INVALID TYPE
+            # =====================================================
+
+            if not isinstance(item, dict):
+
+                logger.warning(
+                    "Skipping invalid recommendation type: %s",
+                    type(item),
+                )
+
+                continue
+
+            # =====================================================
+            # REQUIRED NAME
+            # =====================================================
+
+            name = str(
+                item.get("name", "")
+            ).strip()
+
+            if not name:
+                continue
+
+            normalized_name = (
+                name.lower()
+            )
+
+            if normalized_name in seen_names:
+                continue
+
+            seen_names.add(
+                normalized_name
+            )
+
+            # =====================================================
+            # BUILD RECOMMENDATION
+            # =====================================================
+
+            recommendation = Recommendation(
+
+                # =================================================
+                # REQUIRED
+                # =================================================
+
+                name=name,
+
+                url=item.get("url"),
+
+                test_type=normalize_test_type(
+                    item.get("test_type")
+                ),
+
+                # =================================================
+                # OPTIONAL
+                # =================================================
+
+                description=str(
+                    item.get(
+                        "description",
+                        "",
+                    )
+                ).strip(),
+
+                score=safe_float(
+                    item.get("score"),
+                    0.0,
+                ),
+
+                confidence=safe_float(
+                    item.get("confidence"),
+                    0.0,
+                ),
+
+                recommendation_strength=str(
+                    item.get(
+                        "recommendation_strength",
+                        "medium",
+                    )
+                ),
+
+                explanation=str(
+                    item.get(
+                        "explanation",
+                        "",
+                    )
+                ).strip(),
+
+                matched_roles=normalize_string_list(
+                    item.get(
+                        "matched_roles",
+                    )
+                ),
+
+                matched_domains=normalize_string_list(
+                    item.get(
+                        "matched_domains",
+                    )
+                ),
+
+                matched_competencies=normalize_string_list(
+                    item.get(
+                        "matched_competencies",
+                    )
+                ),
+
+                domains=normalize_string_list(
+                    item.get(
+                        "domains",
+                    )
+                ),
+
+                roles=normalize_string_list(
+                    item.get(
+                        "roles",
+                    )
+                ),
+
+                job_levels=normalize_string_list(
+                    item.get(
+                        "job_levels",
+                    )
+                ),
+
+                languages=normalize_string_list(
+                    item.get(
+                        "languages",
+                    )
+                ),
+
+                duration=item.get(
+                    "duration"
+                ),
+
+                remote=bool(
+                    item.get(
+                        "remote",
+                        False,
+                    )
+                ),
+
+                adaptive=bool(
+                    item.get(
+                        "adaptive",
+                        False,
+                    )
+                ),
+
+                retrieval_metadata=item.get(
+                    "retrieval_metadata",
+                    {},
+                ),
+            )
+
+            normalized.append(
+                recommendation
+            )
+
+        except Exception as error:
+
+            logger.exception(
+                "Recommendation normalization failed: %s",
+                error,
+            )
+
+            continue
+
+    return normalized
+
+
+# =========================================================
+# SAFE CHAT RESPONSE
+# =========================================================
+
+
+def build_chat_response(
+    reply: str,
+    recommendations: list[Recommendation],
+    end_of_conversation: bool = False,
+) -> ChatResponse:
+
+    """
+    IMPORTANT:
+    Only send fields that EXIST
+    inside ChatResponse schema.
+
+    This prevents Pydantic v2
+    extra_forbidden crashes.
+    """
+
+    return ChatResponse(
+        reply=reply,
+        recommendations=recommendations,
+        end_of_conversation=end_of_conversation,
+    )
+
 
 # =========================================================
 # CHAT ENDPOINT
 # =========================================================
+
 
 @router.post(
     "/chat",
@@ -80,39 +420,42 @@ async def chat(
     request: ChatRequest,
 ) -> ChatResponse:
 
-    logger.info("CHAT REQUEST STARTED")
+    start_time = time.perf_counter()
+
+    logger.info(
+        "CHAT REQUEST STARTED"
+    )
 
     try:
 
-        # =================================================
+        # =====================================================
         # VALIDATE REQUEST
-        # =================================================
+        # =====================================================
 
         if not request.messages:
 
-            logger.warning(
-                "Empty messages payload received"
-            )
-
-            return ChatResponse(
+            return build_chat_response(
                 reply=(
                     "Please provide a hiring "
-                    "requirement or SHL "
-                    "assessment query."
+                    "requirement or assessment query."
                 ),
                 recommendations=[],
                 end_of_conversation=False,
             )
 
-        # =================================================
-        # GET LATEST USER MESSAGE
-        # =================================================
+        # =====================================================
+        # USER MESSAGE
+        # =====================================================
 
         latest_user_message = (
             get_latest_user_message(
                 request.messages
-            ).strip()
+            )
         )
+
+        latest_user_message = str(
+            latest_user_message or ""
+        ).strip()
 
         logger.info(
             "Latest user message: %s",
@@ -121,22 +464,18 @@ async def chat(
 
         if not latest_user_message:
 
-            logger.warning(
-                "Latest user message empty"
-            )
-
-            return ChatResponse(
+            return build_chat_response(
                 reply=(
                     "Please provide a valid "
-                    "hiring requirement."
+                    "job requirement or hiring query."
                 ),
                 recommendations=[],
                 end_of_conversation=False,
             )
 
-        # =================================================
+        # =====================================================
         # SAFETY CHECK
-        # =================================================
+        # =====================================================
 
         if not is_safe_query(
             latest_user_message
@@ -146,49 +485,45 @@ async def chat(
                 "Unsafe query blocked"
             )
 
-            return ChatResponse(
+            return build_chat_response(
                 reply=refusal_response(),
                 recommendations=[],
                 end_of_conversation=False,
             )
 
-        # =================================================
-        # INTENT DETECTION
-        # =================================================
+        # =====================================================
+        # DETECT INTENT
+        # =====================================================
 
         intent = detect_intent(
             request.messages
         )
 
         logger.info(
-            "Detected intent: %s",
+            "Intent detected: %s",
             intent,
         )
 
-        # =================================================
-        # OFFTOPIC HANDLING
-        # =================================================
+        # =====================================================
+        # OFFTOPIC
+        # =====================================================
 
         if intent == "offtopic":
 
-            logger.info(
-                "Handled off-topic request"
-            )
-
-            return ChatResponse(
+            return build_chat_response(
                 reply=(
-                    "I can help with SHL "
-                    "assessment recommendations, "
-                    "candidate evaluation, "
+                    "I can help with SHL assessment "
+                    "recommendations, hiring evaluations, "
+                    "candidate assessment strategies, "
                     "and assessment comparisons."
                 ),
                 recommendations=[],
                 end_of_conversation=False,
             )
 
-        # =================================================
-        # CONTEXT EXTRACTION
-        # =================================================
+        # =====================================================
+        # EXTRACT CONTEXT
+        # =====================================================
 
         context = extract_context(
             request.messages
@@ -199,9 +534,9 @@ async def chat(
             context,
         )
 
-        # =================================================
-        # CLARIFICATION CHECK
-        # =================================================
+        # =====================================================
+        # CLARIFICATION
+        # =====================================================
 
         clarification = (
             should_ask_clarification(
@@ -210,64 +545,33 @@ async def chat(
             )
         )
 
-        if clarification.get(
-            "needed",
-            False,
-        ):
-
-            has_role = bool(
-                context.get("roles")
+        clarification_needed = (
+            clarification.get(
+                "needed",
+                False,
             )
+        )
 
-            has_skills = bool(
-                context.get("skills")
-            )
+        if clarification_needed:
 
-            has_focus = any([
-                context.get(
-                    "leadership_required"
-                ),
-                context.get(
-                    "communication_required"
-                ),
-                context.get(
-                    "personality_required"
-                ),
-                context.get(
-                    "cognitive_required"
-                ),
-            ])
-
-            enough_context = any([
-                has_role,
-                has_skills,
-                has_focus,
-            ])
-
-            if not enough_context:
-
-                logger.info(
-                    "Clarification required"
-                )
-
-                question = (
-                    generate_clarification_question(
-                        clarification.get(
-                            "missing_fields",
-                            [],
-                        )
+            question = (
+                generate_clarification_question(
+                    clarification.get(
+                        "missing_fields",
+                        [],
                     )
                 )
+            )
 
-                return ChatResponse(
-                    reply=question,
-                    recommendations=[],
-                    end_of_conversation=False,
-                )
+            return build_chat_response(
+                reply=question,
+                recommendations=[],
+                end_of_conversation=False,
+            )
 
-        # =================================================
+        # =====================================================
         # BUILD SEARCH QUERY
-        # =================================================
+        # =====================================================
 
         search_query = (
             build_search_query(
@@ -275,33 +579,33 @@ async def chat(
             )
         )
 
+        search_query = str(
+            search_query or ""
+        ).strip()
+
         logger.info(
             "Search query: %s",
             search_query,
         )
 
-        if not search_query.strip():
+        if not search_query:
 
-            logger.warning(
-                "Generated empty search query"
-            )
-
-            return ChatResponse(
+            return build_chat_response(
                 reply=(
                     "Please provide more details "
-                    "about the role, required skills, "
-                    "or assessment focus."
+                    "about the role, technical skills, "
+                    "or assessment objectives."
                 ),
                 recommendations=[],
                 end_of_conversation=False,
             )
 
-        # =================================================
+        # =====================================================
         # RETRIEVAL
-        # =================================================
+        # =====================================================
 
         logger.info(
-            "Starting assessment retrieval"
+            "Starting retrieval"
         )
 
         raw_results = await run_in_threadpool(
@@ -312,32 +616,29 @@ async def chat(
         raw_results = raw_results or []
 
         logger.info(
-            "Retrieved %s candidates",
+            "Retrieved %s raw results",
             len(raw_results),
         )
 
+        # =====================================================
+        # NO RESULTS
+        # =====================================================
+
         if not raw_results:
 
-            logger.warning(
-                "No retrieval results found"
-            )
-
-            return ChatResponse(
+            return build_chat_response(
                 reply=(
                     "I could not find sufficiently "
-                    "relevant SHL assessments."
+                    "relevant SHL assessments for "
+                    "this hiring requirement."
                 ),
                 recommendations=[],
                 end_of_conversation=False,
             )
 
-        # =================================================
-        # RECOMMENDATIONS
-        # =================================================
-
-        logger.info(
-            "Generating recommendations"
-        )
+        # =====================================================
+        # GENERATE RECOMMENDATIONS
+        # =====================================================
 
         recommendations = await run_in_threadpool(
             generate_recommendations,
@@ -353,29 +654,44 @@ async def chat(
             len(recommendations),
         )
 
+        # =====================================================
+        # NORMALIZE
+        # =====================================================
+
+        recommendations = (
+            normalize_recommendations(
+                recommendations
+            )
+        )
+
+        logger.info(
+            "Normalized %s recommendations",
+            len(recommendations),
+        )
+
+        # =====================================================
+        # EMPTY RESULTS
+        # =====================================================
+
         if not recommendations:
 
-            logger.warning(
-                "No valid recommendations generated"
-            )
-
-            return ChatResponse(
+            return build_chat_response(
                 reply=(
-                    "I found possible matches, "
+                    "I found assessment matches, "
                     "but none passed final validation."
                 ),
                 recommendations=[],
                 end_of_conversation=False,
             )
 
-        # =================================================
+        # =====================================================
         # COMPARISON MODE
-        # =================================================
+        # =====================================================
 
         if intent == "comparison":
 
             logger.info(
-                "Running comparison mode"
+                "Comparison mode activated"
             )
 
             comparison_reply = (
@@ -385,21 +701,35 @@ async def chat(
                 )
             )
 
-            return ChatResponse(
+            response_time_ms = round(
+                (
+                    time.perf_counter()
+                    - start_time
+                )
+                * 1000,
+                2,
+            )
+
+            logger.info(
+                "Comparison completed in %sms",
+                response_time_ms,
+            )
+
+            return build_chat_response(
                 reply=comparison_reply,
                 recommendations=recommendations,
                 end_of_conversation=False,
             )
 
-        # =================================================
-        # LLM RESPONSE
-        # =================================================
-
-        logger.info(
-            "Generating LLM response"
-        )
+        # =====================================================
+        # GENERATE LLM RESPONSE
+        # =====================================================
 
         try:
+
+            logger.info(
+                "Generating LLM response"
+            )
 
             reply = await run_in_threadpool(
                 generate_llm_response,
@@ -409,6 +739,12 @@ async def chat(
                 intent,
             )
 
+            if not reply:
+
+                raise ValueError(
+                    "Empty LLM response"
+                )
+
         except Exception as error:
 
             logger.exception(
@@ -417,19 +753,18 @@ async def chat(
             )
 
             top_names = [
-                item.get("name", "")
+                item.name
                 for item in recommendations[:3]
-                if item.get("name")
             ]
 
             reply = (
-                f"I found relevant SHL assessments including: "
+                "I found relevant SHL assessments including: "
                 f"{', '.join(top_names)}."
             )
 
-        # =================================================
+        # =====================================================
         # END DETECTION
-        # =================================================
+        # =====================================================
 
         end_of_conversation = (
             detect_conversation_end(
@@ -438,15 +773,41 @@ async def chat(
             )
         )
 
-        logger.info(
-            "CHAT REQUEST COMPLETED SUCCESSFULLY"
+        # =====================================================
+        # RESPONSE TIME
+        # =====================================================
+
+        response_time_ms = round(
+            (
+                time.perf_counter()
+                - start_time
+            )
+            * 1000,
+            2,
         )
 
-        return ChatResponse(
+        logger.info(
+            "CHAT REQUEST COMPLETED"
+        )
+
+        logger.info(
+            "Response time: %sms",
+            response_time_ms,
+        )
+
+        # =====================================================
+        # FINAL RESPONSE
+        # =====================================================
+
+        return build_chat_response(
             reply=reply,
             recommendations=recommendations,
             end_of_conversation=end_of_conversation,
         )
+
+    except HTTPException:
+
+        raise
 
     except Exception as error:
 
@@ -460,5 +821,8 @@ async def chat(
 
         raise HTTPException(
             status_code=500,
-            detail=str(error),
-        )
+            detail=(
+                "Internal server error occurred "
+                "while processing request."
+            ),
+        ) from error

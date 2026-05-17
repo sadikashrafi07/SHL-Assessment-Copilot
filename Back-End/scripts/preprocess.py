@@ -1,14 +1,24 @@
 # =========================================================
 # scripts/preprocess.py
 # Production-Grade SHL Catalog Enrichment Pipeline
+# Optimized for:
+# - Hybrid Retrieval
+# - BM25
+# - Semantic Search
+# - Railway Deployment
+# - BGE Embeddings
 # =========================================================
 
 from __future__ import annotations
 
 import json
 import re
-from collections import Counter, defaultdict
+
+from collections import Counter
+from collections import defaultdict
+
 from pathlib import Path
+
 from typing import Any
 
 # =========================================================
@@ -17,9 +27,17 @@ from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-INPUT_FILE = BASE_DIR / "data" / "shl_product_catalog.json"
+INPUT_FILE = (
+    BASE_DIR
+    / "data"
+    / "shl_product_catalog.json"
+)
 
-OUTPUT_FILE = BASE_DIR / "data" / "cleaned_catalog.json"
+OUTPUT_FILE = (
+    BASE_DIR
+    / "data"
+    / "cleaned_catalog.json"
+)
 
 if not INPUT_FILE.exists():
     raise FileNotFoundError(
@@ -48,22 +66,58 @@ TEST_TYPE_MAP = {
 # =========================================================
 
 SEMANTIC_SYNONYMS = {
-    "software engineer": "software developer",
-    "backend engineer": "software developer",
-    "frontend engineer": "software developer",
-    "full stack engineer": "software developer",
-    "developer engineer": "software developer",
-    "programmer": "software developer",
-    "artificial intelligence": "ai",
-    "machine learning": "ai",
-    "occupational personality questionnaire": "opq",
-    "situational judgment": "situational judgement",
-    "people management": "leadership",
-    "cross functional": "cross-functional",
-    "stakeholder engagement": "stakeholder management",
-    "product owner": "product manager",
-    "project lead": "project manager",
-    "business analyst": "analyst",
+
+    # SOFTWARE
+    "software engineer":
+        "software developer",
+
+    "backend engineer":
+        "backend developer",
+
+    "frontend engineer":
+        "frontend developer",
+
+    "full stack engineer":
+        "full stack developer",
+
+    "developer engineer":
+        "software developer",
+
+    "programmer":
+        "software developer",
+
+    # AI
+    "artificial intelligence":
+        "ai",
+
+    "machine learning":
+        "ai",
+
+    # SHL
+    "occupational personality questionnaire":
+        "opq",
+
+    "situational judgment":
+        "situational judgement",
+
+    # MANAGEMENT
+    "people management":
+        "leadership",
+
+    "stakeholder engagement":
+        "stakeholder management",
+
+    "cross functional":
+        "cross-functional",
+
+    "project lead":
+        "project manager",
+
+    "product owner":
+        "product manager",
+
+    "business analyst":
+        "analyst",
 }
 
 # =========================================================
@@ -71,6 +125,7 @@ SEMANTIC_SYNONYMS = {
 # =========================================================
 
 COMPETENCY_GRAPH = {
+
     "stakeholder management": [
         "communication",
         "leadership",
@@ -104,20 +159,29 @@ COMPETENCY_GRAPH = {
         "decision making",
     ],
 
-    "product management": [
-        "roadmapping",
-        "strategy",
-        "stakeholder management",
-        "prioritization",
-        "leadership",
-    ],
-
     "software development": [
         "coding",
         "programming",
         "debugging",
         "algorithms",
         "system design",
+    ],
+
+    "devops": [
+        "cloud",
+        "aws",
+        "docker",
+        "kubernetes",
+        "linux",
+        "automation",
+    ],
+
+    "data science": [
+        "statistics",
+        "python",
+        "analytics",
+        "machine learning",
+        "data analysis",
     ],
 }
 
@@ -126,6 +190,7 @@ COMPETENCY_GRAPH = {
 # =========================================================
 
 ROLE_ONTOLOGY = {
+
     "software developer": {
         "skills": [
             "java",
@@ -133,13 +198,43 @@ ROLE_ONTOLOGY = {
             "sql",
             "coding",
             "programming",
-            "software development",
-            "debugging",
             "algorithms",
+            "debugging",
+            "software development",
         ],
-        "domains": [
-            "technical",
-            "cognitive",
+        "threshold": 2,
+    },
+
+    "backend developer": {
+        "skills": [
+            "api",
+            "backend",
+            "microservices",
+            "sql",
+            "python",
+            "java",
+        ],
+        "threshold": 2,
+    },
+
+    "frontend developer": {
+        "skills": [
+            "frontend",
+            "react",
+            "javascript",
+            "typescript",
+            "ui",
+        ],
+        "threshold": 2,
+    },
+
+    "full stack developer": {
+        "skills": [
+            "frontend",
+            "backend",
+            "react",
+            "api",
+            "sql",
         ],
         "threshold": 2,
     },
@@ -147,17 +242,10 @@ ROLE_ONTOLOGY = {
     "product manager": {
         "skills": [
             "stakeholder management",
-            "strategy",
             "roadmapping",
-            "leadership",
-            "cross-functional collaboration",
-            "decision making",
-            "communication",
-        ],
-        "domains": [
+            "strategy",
             "leadership",
             "communication",
-            "cognitive",
         ],
         "threshold": 2,
     },
@@ -168,11 +256,28 @@ ROLE_ONTOLOGY = {
             "people management",
             "strategic thinking",
             "decision making",
-            "communication",
         ],
-        "domains": [
-            "leadership",
-            "communication",
+        "threshold": 2,
+    },
+
+    "data scientist": {
+        "skills": [
+            "python",
+            "statistics",
+            "analytics",
+            "machine learning",
+            "data analysis",
+        ],
+        "threshold": 2,
+    },
+
+    "devops engineer": {
+        "skills": [
+            "aws",
+            "docker",
+            "kubernetes",
+            "linux",
+            "cloud",
         ],
         "threshold": 2,
     },
@@ -182,11 +287,6 @@ ROLE_ONTOLOGY = {
             "communication",
             "persuasion",
             "relationship management",
-            "collaboration",
-        ],
-        "domains": [
-            "communication",
-            "personality",
         ],
         "threshold": 2,
     },
@@ -197,16 +297,41 @@ ROLE_ONTOLOGY = {
 # =========================================================
 
 DOMAIN_MAP = {
+
     "technical": {
+
         "java",
         "python",
         "sql",
-        "coding",
+
+        "react",
+        "node",
+        "javascript",
+        "typescript",
+
+        "backend",
+        "frontend",
+        "full stack",
+
+        "api",
+        "microservices",
+
+        "cloud",
+        "aws",
+        "docker",
+        "kubernetes",
+
+        "linux",
+        "devops",
+
         "software",
         "engineering",
         "developer",
-        "algorithms",
+
+        "coding",
         "programming",
+        "algorithms",
+        "system design",
     },
 
     "cognitive": {
@@ -264,6 +389,7 @@ DOMAIN_MAP = {
 # =========================================================
 
 SENIORITY_SIGNALS = {
+
     "junior": {
         "entry level",
         "graduate",
@@ -296,6 +422,7 @@ SENIORITY_SIGNALS = {
 # =========================================================
 
 INTENT_KEYWORDS = {
+
     "technical_screening": {
         "coding",
         "java",
@@ -337,6 +464,7 @@ INTENT_KEYWORDS = {
 # =========================================================
 
 def slugify(text: str) -> str:
+
     return re.sub(
         r"[^a-z0-9]+",
         "-",
@@ -351,7 +479,8 @@ def clean_text(text: Any) -> str:
 
     if isinstance(text, list):
         text = " ".join(
-            str(x) for x in text
+            str(x)
+            for x in text
         )
 
     text = str(text).lower()
@@ -531,6 +660,7 @@ def infer_test_type(
 ) -> str:
 
     scores = {
+
         "knowledge":
             len(record["technical_skills"]) * 1.2,
 
@@ -546,6 +676,15 @@ def infer_test_type(
         "leadership":
             len(record["leadership_traits"]) * 1.5,
     }
+
+    if scores["leadership"] >= 2:
+        return "L"
+
+    if scores["personality"] >= 2:
+        return "P"
+
+    if scores["cognitive"] >= 2:
+        return "A"
 
     best = max(
         scores,
@@ -590,7 +729,6 @@ with open(
 processed = []
 
 seen_urls = set()
-
 seen_names = set()
 
 for item in raw_data:
@@ -608,10 +746,10 @@ for item in raw_data:
             )
         ).strip()
 
-        # IMPORTANT FIX:
-        # NEVER CLEAN URLS
+        if not raw_name:
+            continue
 
-        if not raw_name or not raw_url:
+        if not raw_url:
             continue
 
         if not raw_url.startswith(
@@ -629,10 +767,7 @@ for item in raw_data:
         if raw_url in seen_urls:
             continue
 
-        seen_names.add(
-            normalized_name
-        )
-
+        seen_names.add(normalized_name)
         seen_urls.add(raw_url)
 
         description = clean_text(
@@ -657,6 +792,27 @@ for item in raw_data:
             [],
         )
 
+        duration = clean_text(
+            item.get(
+                "duration",
+                "",
+            )
+        )
+
+        remote = clean_text(
+            item.get(
+                "remote",
+                "",
+            )
+        )
+
+        adaptive = clean_text(
+            item.get(
+                "adaptive",
+                "",
+            )
+        )
+
         source_text = normalize_text(
             " ".join(
                 [
@@ -665,6 +821,9 @@ for item in raw_data:
                     " ".join(keys),
                     " ".join(job_levels),
                     " ".join(languages),
+                    duration,
+                    remote,
+                    adaptive,
                 ]
             )
         )
@@ -699,13 +858,15 @@ for item in raw_data:
             DOMAIN_MAP["situational"],
         )
 
-        all_traits = (
-            technical_skills
-            + cognitive_traits
-            + personality_traits
-            + leadership_traits
-            + communication_skills
-            + situational_traits
+        all_traits = sorted(
+            set(
+                technical_skills
+                + cognitive_traits
+                + personality_traits
+                + leadership_traits
+                + communication_skills
+                + situational_traits
+            )
         )
 
         expanded_competencies = (
@@ -714,7 +875,45 @@ for item in raw_data:
             )
         )
 
+        inferred_domains = infer_domains(
+            source_text
+        )
+
+        inferred_roles = infer_roles(
+            source_text
+        )
+
+        inferred_seniority = (
+            infer_seniority(
+                source_text
+            )
+        )
+
+        inferred_intents = (
+            infer_intents(
+                source_text
+            )
+        )
+
+        negative_domains = []
+
+        if "technical" in inferred_domains:
+            negative_domains.extend([
+                "sales",
+                "executive",
+            ])
+
+        if "leadership" in inferred_domains:
+            negative_domains.extend([
+                "entry-level",
+            ])
+
+        negative_domains = sorted(
+            set(negative_domains)
+        )
+
         record = {
+
             "id":
                 slugify(raw_name),
 
@@ -731,10 +930,16 @@ for item in raw_data:
                 ).strip(),
 
             "domains":
-                infer_domains(source_text),
+                inferred_domains,
 
             "roles":
-                infer_roles(source_text),
+                inferred_roles,
+
+            "recommended_seniority":
+                inferred_seniority,
+
+            "intents":
+                inferred_intents,
 
             "job_levels":
                 job_levels,
@@ -743,28 +948,13 @@ for item in raw_data:
                 languages,
 
             "duration":
-                clean_text(
-                    item.get(
-                        "duration",
-                        "",
-                    )
-                ),
+                duration,
 
             "remote":
-                clean_text(
-                    item.get(
-                        "remote",
-                        "",
-                    )
-                ),
+                remote,
 
             "adaptive":
-                clean_text(
-                    item.get(
-                        "adaptive",
-                        "",
-                    )
-                ),
+                adaptive,
 
             "technical_skills":
                 technical_skills,
@@ -787,16 +977,45 @@ for item in raw_data:
             "expanded_competencies":
                 expanded_competencies,
 
-            "recommended_seniority":
-                infer_seniority(source_text),
+            "negative_domains":
+                negative_domains,
 
-            "intents":
-                infer_intents(source_text),
+            "comparison_metadata": {
+
+                "domains":
+                    inferred_domains,
+
+                "roles":
+                    inferred_roles,
+
+                "duration":
+                    duration,
+
+                "adaptive":
+                    adaptive,
+
+                "remote":
+                    remote,
+
+                "job_levels":
+                    job_levels,
+
+                "languages":
+                    languages,
+            },
         }
+
+        # =================================================
+        # TEST TYPE
+        # =================================================
 
         record["test_type"] = (
             infer_test_type(record)
         )
+
+        # =================================================
+        # WEIGHTS
+        # =================================================
 
         total_traits = max(
             len(all_traits),
@@ -804,6 +1023,7 @@ for item in raw_data:
         )
 
         record["weights"] = {
+
             "technical":
                 normalize_weight(
                     len(technical_skills),
@@ -833,7 +1053,70 @@ for item in raw_data:
                     len(communication_skills),
                     total_traits,
                 ),
+
+            "situational":
+                normalize_weight(
+                    len(situational_traits),
+                    total_traits,
+                ),
         }
+
+        # =================================================
+        # STRUCTURED EMBEDDING TEXT
+        # =================================================
+
+        record["embedding_text"] = f"""
+Assessment Name:
+{raw_name}
+
+Description:
+{description}
+
+Domains:
+{' '.join(inferred_domains)}
+
+Roles:
+{' '.join(inferred_roles)}
+
+Seniority:
+{' '.join(inferred_seniority)}
+
+Intent:
+{' '.join(inferred_intents)}
+
+Technical Skills:
+{' '.join(technical_skills)}
+
+Cognitive Traits:
+{' '.join(cognitive_traits)}
+
+Personality Traits:
+{' '.join(personality_traits)}
+
+Leadership Traits:
+{' '.join(leadership_traits)}
+
+Communication Skills:
+{' '.join(communication_skills)}
+
+Situational Traits:
+{' '.join(situational_traits)}
+
+Expanded Competencies:
+{' '.join(expanded_competencies)}
+
+Duration:
+{duration}
+
+Remote:
+{remote}
+
+Adaptive:
+{adaptive}
+
+Assessment Type:
+{record['test_type']}
+""".strip()
 
         processed.append(record)
 

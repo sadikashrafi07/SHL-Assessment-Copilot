@@ -1,5 +1,8 @@
 # =========================================================
 # app/services/recommendation.py
+# Production Recommendation Engine
+# Enterprise Hybrid Recommendation Layer
+# FULLY FIXED VERSION
 # =========================================================
 
 from __future__ import annotations
@@ -31,20 +34,26 @@ logger = logging.getLogger(__name__)
 
 FRONTEND_KEYWORDS = {
     "frontend",
+    "front end",
     "javascript",
     "typescript",
     "react",
+    "reactjs",
     "angular",
     "vue",
+    "vuejs",
     "ui",
     "ux",
     "css",
     "html",
     "web",
+    "accessibility",
+    "responsive",
 }
 
 BACKEND_KEYWORDS = {
     "backend",
+    "back end",
     "java",
     "spring",
     "api",
@@ -54,6 +63,10 @@ BACKEND_KEYWORDS = {
     "python",
     "node",
     "server",
+    "django",
+    "flask",
+    "fastapi",
+    "rest",
 }
 
 DATA_SCIENCE_KEYWORDS = {
@@ -61,68 +74,114 @@ DATA_SCIENCE_KEYWORDS = {
     "data scientist",
     "machine learning",
     "deep learning",
-    "ai",
     "analytics",
     "statistics",
-    "python",
-    "sql",
-    "data analysis",
+    "statistical",
+    "ai",
     "artificial intelligence",
-    "reasoning",
+    "nlp",
     "predictive",
     "modeling",
+    "classification",
+    "regression",
+    "neural network",
+    "pandas",
+    "numpy",
 }
 
 COMMUNICATION_KEYWORDS = {
+    "business communication",
+    "interpersonal communication",
     "communication",
-    "stakeholder",
     "presentation",
-    "verbal",
-    "interpersonal",
+    "stakeholder",
+    "written communication",
+    "verbal communication",
     "collaboration",
-    "written",
+    "negotiation",
+    "listening",
     "facilitation",
 }
 
 LEADERSHIP_KEYWORDS = {
     "leadership",
+    "leader",
     "management",
     "manager",
-    "ownership",
-    "strategic",
-    "executive",
-    "decision making",
+    "stakeholder management",
     "people management",
+    "executive",
+    "strategic",
+    "ownership",
+    "decision making",
+    "organizational",
 }
 
 COGNITIVE_KEYWORDS = {
     "cognitive",
     "reasoning",
+    "logical",
+    "analytical",
     "problem solving",
     "critical thinking",
-    "analytical",
-    "logical",
-    "aptitude",
+    "numerical",
+    "deductive",
+    "inductive",
 }
 
 SITUATIONAL_KEYWORDS = {
     "situational",
-    "scenario",
     "judgement",
     "judgment",
-    "customer service",
-    "service",
+    "scenario",
     "simulation",
+    "decision making",
 }
 
-TECHNICAL_TEST_TYPES = {
-    "K",
-    "C",
+# =========================================================
+# NEGATIVE KEYWORDS
+# Prevent False Positives
+# =========================================================
+
+IRRELEVANT_COMMUNICATION_CONTEXT = {
+    "telecommunication",
+    "telecommunications",
+    "microwave",
+    "signal processing",
+    "electromagnetism",
+    "network engineering",
+    "instrumentation",
+    "semiconductor",
+    "electronics",
+}
+
+# =========================================================
+# TEST TYPE PRIORITY
+# =========================================================
+
+TEST_TYPE_WEIGHTS = {
+    "K": 1.12,
+    "A": 1.08,
+    "S": 1.04,
+    "L": 1.10,
+    "P": 1.02,
 }
 
 # =========================================================
 # HELPERS
 # =========================================================
+
+
+def safe_float(
+    value: Any,
+    default: float = 0.0,
+) -> float:
+
+    try:
+        return float(value)
+
+    except (TypeError, ValueError):
+        return default
 
 
 def contains_any(
@@ -138,56 +197,51 @@ def contains_any(
     )
 
 
-def safe_float(
-    value: Any,
-    default: float = 0.0,
-) -> float:
-
-    try:
-        return float(value)
-
-    except (
-        TypeError,
-        ValueError,
-    ):
-        return default
-
-
 def build_searchable_text(
     item: dict[str, Any],
 ) -> str:
 
+    values: list[str] = []
+
+    string_fields = [
+        "name",
+        "description",
+    ]
+
+    list_fields = [
+        "domains",
+        "roles",
+        "job_levels",
+        "technical_skills",
+        "communication_skills",
+        "leadership_traits",
+        "expanded_competencies",
+        "matched_domains",
+        "matched_roles",
+        "matched_competencies",
+    ]
+
+    for field in string_fields:
+
+        value = item.get(field)
+
+        if value:
+            values.append(str(value))
+
+    for field in list_fields:
+
+        field_values = item.get(field, [])
+
+        if isinstance(field_values, list):
+
+            values.extend(
+                str(v)
+                for v in field_values
+                if v
+            )
+
     return normalize(
-        " ".join(
-            [
-                item.get("name", ""),
-                item.get("description", ""),
-                " ".join(
-                    item.get(
-                        "technical_skills",
-                        [],
-                    )
-                ),
-                " ".join(
-                    item.get(
-                        "communication_skills",
-                        [],
-                    )
-                ),
-                " ".join(
-                    item.get(
-                        "domains",
-                        [],
-                    )
-                ),
-                " ".join(
-                    item.get(
-                        "job_levels",
-                        [],
-                    )
-                ),
-            ]
-        )
+        " ".join(values)
     )
 
 
@@ -200,47 +254,47 @@ def infer_query_intent(
     query: str,
 ) -> dict[str, bool]:
 
-    normalized_query = normalize(query)
+    query = normalize(query)
 
     intent = {
         "frontend": contains_any(
-            normalized_query,
+            query,
             FRONTEND_KEYWORDS,
         ),
 
         "backend": contains_any(
-            normalized_query,
+            query,
             BACKEND_KEYWORDS,
         ),
 
         "data_science": contains_any(
-            normalized_query,
+            query,
             DATA_SCIENCE_KEYWORDS,
         ),
 
         "communication": contains_any(
-            normalized_query,
+            query,
             COMMUNICATION_KEYWORDS,
         ),
 
         "leadership": contains_any(
-            normalized_query,
+            query,
             LEADERSHIP_KEYWORDS,
         ),
 
         "cognitive": contains_any(
-            normalized_query,
+            query,
             COGNITIVE_KEYWORDS,
         ),
 
         "situational": contains_any(
-            normalized_query,
+            query,
             SITUATIONAL_KEYWORDS,
         ),
     }
 
     logger.info(
-        "Detected intent: %s",
+        "Detected query intent: %s",
         intent,
     )
 
@@ -248,7 +302,7 @@ def infer_query_intent(
 
 
 # =========================================================
-# CONFIDENCE CALIBRATION
+# CONFIDENCE
 # =========================================================
 
 
@@ -261,32 +315,18 @@ def calibrate_confidence(
         0.0,
     )
 
-    if score >= 0.90:
-        confidence = 0.96
+    confidence = (
+        0.45 + (score * 0.50)
+    )
 
-    elif score >= 0.80:
-        confidence = 0.92
-
-    elif score >= 0.70:
-        confidence = 0.88
-
-    elif score >= 0.60:
-        confidence = 0.82
-
-    elif score >= 0.50:
-        confidence = 0.74
-
-    elif score >= 0.40:
-        confidence = 0.66
-
-    else:
-        confidence = 0.55
-
-    return round(confidence, 2)
+    return round(
+        min(confidence, 0.99),
+        2,
+    )
 
 
 # =========================================================
-# RECOMMENDATION STRENGTH
+# STRENGTH
 # =========================================================
 
 
@@ -294,17 +334,17 @@ def infer_strength(
     confidence: float,
 ) -> str:
 
-    if confidence >= HIGH_CONFIDENCE_THRESHOLD:
+    if confidence >= 0.85:
         return "high"
 
-    if confidence >= 0.65:
+    if confidence >= 0.70:
         return "medium"
 
     return "low"
 
 
 # =========================================================
-# EXPLANATION GENERATION
+# EXPLANATION
 # =========================================================
 
 
@@ -312,8 +352,6 @@ def build_explanation(
     item: dict[str, Any],
     intent: dict[str, bool],
 ) -> str:
-
-    reasons: list[str] = []
 
     text = build_searchable_text(item)
 
@@ -328,8 +366,10 @@ def build_explanation(
             FRONTEND_KEYWORDS,
         )
     ):
-        reasons.append(
-            "matches frontend engineering requirements"
+
+        return (
+            "This assessment evaluates frontend engineering, "
+            "JavaScript frameworks, UI development, and web application skills."
         )
 
     # =====================================================
@@ -343,8 +383,10 @@ def build_explanation(
             BACKEND_KEYWORDS,
         )
     ):
-        reasons.append(
-            "aligns with backend development and API skills"
+
+        return (
+            "This assessment evaluates backend development, "
+            "APIs, databases, Python, and server-side engineering skills."
         )
 
     # =====================================================
@@ -358,8 +400,10 @@ def build_explanation(
             DATA_SCIENCE_KEYWORDS,
         )
     ):
-        reasons.append(
-            "evaluates machine learning, analytics, and data science capabilities"
+
+        return (
+            "This assessment evaluates machine learning, "
+            "analytics, statistical reasoning, and data science capabilities."
         )
 
     # =====================================================
@@ -373,8 +417,10 @@ def build_explanation(
             COMMUNICATION_KEYWORDS,
         )
     ):
-        reasons.append(
-            "evaluates communication and collaboration abilities"
+
+        return (
+            "This assessment evaluates communication, "
+            "presentation, collaboration, and stakeholder interaction skills."
         )
 
     # =====================================================
@@ -388,92 +434,31 @@ def build_explanation(
             LEADERSHIP_KEYWORDS,
         )
     ):
-        reasons.append(
-            "supports leadership and stakeholder evaluation"
+
+        return (
+            "This assessment supports leadership, "
+            "organizational strategy, and people management evaluation."
         )
 
     # =====================================================
     # COGNITIVE
     # =====================================================
 
-    if intent["cognitive"]:
-
-        test_type = item.get(
-            "test_type",
-            "",
-        )
-
-        if (
-            test_type == "C"
-            or contains_any(
-                text,
-                COGNITIVE_KEYWORDS,
-            )
-        ):
-            reasons.append(
-                "assesses cognitive reasoning and analytical problem-solving ability"
-            )
-
-    # =====================================================
-    # SITUATIONAL
-    # =====================================================
-
     if (
-        intent["situational"]
+        intent["cognitive"]
         and contains_any(
             text,
-            SITUATIONAL_KEYWORDS,
+            COGNITIVE_KEYWORDS,
         )
     ):
-        reasons.append(
-            "measures situational judgement and customer interaction skills"
+
+        return (
+            "This assessment evaluates logical reasoning, "
+            "problem-solving, and analytical ability."
         )
-
-    # =====================================================
-    # DEFAULT FALLBACK
-    # =====================================================
-
-    if not reasons:
-
-        test_type = item.get(
-            "test_type",
-            "K",
-        )
-
-        if test_type == "K":
-            reasons.append(
-                "assesses technical and job knowledge skills"
-            )
-
-        elif test_type == "C":
-            reasons.append(
-                "evaluates cognitive and analytical ability"
-            )
-
-        elif test_type == "P":
-            reasons.append(
-                "measures workplace personality traits"
-            )
-
-        elif test_type == "S":
-            reasons.append(
-                "assesses situational judgement and decision making"
-            )
-
-        elif test_type == "B":
-            reasons.append(
-                "evaluates behavioral competencies"
-            )
-
-        else:
-            reasons.append(
-                "matches the requested hiring criteria"
-            )
 
     return (
-        "This assessment "
-        + ", ".join(reasons)
-        + "."
+        "This assessment matches the requested hiring requirements."
     )
 
 
@@ -492,21 +477,28 @@ def passes_quality_gate(
     )
 
     if score < MIN_ACCEPTABLE_SCORE:
-
-        logger.info(
-            "Rejected low-score result: %s (%s)",
-            item.get("name"),
-            score,
-        )
-
         return False
 
     text = build_searchable_text(item)
 
-    test_type = item.get(
-        "test_type",
-        "K",
-    )
+    # =====================================================
+    # COMMUNICATION FIX
+    # =====================================================
+
+    if intent["communication"]:
+
+        # reject telecom/electronics false positives
+        if contains_any(
+            text,
+            IRRELEVANT_COMMUNICATION_CONTEXT,
+        ):
+            return False
+
+        if not contains_any(
+            text,
+            COMMUNICATION_KEYWORDS,
+        ):
+            return False
 
     # =====================================================
     # FRONTEND FILTER
@@ -514,19 +506,10 @@ def passes_quality_gate(
 
     if intent["frontend"]:
 
-        if (
-            test_type in TECHNICAL_TEST_TYPES
-            and not contains_any(
-                text,
-                FRONTEND_KEYWORDS,
-            )
+        if not contains_any(
+            text,
+            FRONTEND_KEYWORDS,
         ):
-
-            logger.info(
-                "Rejected frontend mismatch: %s",
-                item.get("name"),
-            )
-
             return False
 
     # =====================================================
@@ -535,19 +518,10 @@ def passes_quality_gate(
 
     if intent["backend"]:
 
-        if (
-            test_type in TECHNICAL_TEST_TYPES
-            and not contains_any(
-                text,
-                BACKEND_KEYWORDS,
-            )
+        if not contains_any(
+            text,
+            BACKEND_KEYWORDS,
         ):
-
-            logger.info(
-                "Rejected backend mismatch: %s",
-                item.get("name"),
-            )
-
             return False
 
     # =====================================================
@@ -560,12 +534,6 @@ def passes_quality_gate(
             text,
             DATA_SCIENCE_KEYWORDS,
         ):
-
-            logger.info(
-                "Rejected data science mismatch: %s",
-                item.get("name"),
-            )
-
             return False
 
     # =====================================================
@@ -574,25 +542,10 @@ def passes_quality_gate(
 
     if intent["leadership"]:
 
-        leadership_match = contains_any(
+        if not contains_any(
             text,
             LEADERSHIP_KEYWORDS,
-        )
-
-        if (
-            not leadership_match
-            and test_type not in {
-                "P",
-                "B",
-                "S",
-            }
         ):
-
-            logger.info(
-                "Rejected leadership mismatch: %s",
-                item.get("name"),
-            )
-
             return False
 
     # =====================================================
@@ -601,51 +554,213 @@ def passes_quality_gate(
 
     if intent["cognitive"]:
 
-        cognitive_match = contains_any(
-            text,
-            COGNITIVE_KEYWORDS,
-        )
-
-        if (
-            test_type != "C"
-            and not cognitive_match
-        ):
-
-            logger.info(
-                "Rejected cognitive mismatch: %s",
-                item.get("name"),
+        if not (
+            contains_any(
+                text,
+                COGNITIVE_KEYWORDS,
             )
-
-            return False
-
-    # =====================================================
-    # SITUATIONAL FILTER
-    # =====================================================
-
-    if intent["situational"]:
-
-        situational_match = contains_any(
-            text,
-            SITUATIONAL_KEYWORDS,
-        )
-
-        if (
-            not situational_match
-            and test_type != "S"
+            or item.get("test_type") == "A"
         ):
-
-            logger.info(
-                "Rejected situational mismatch: %s",
-                item.get("name"),
-            )
-
             return False
 
     return True
 
 
 # =========================================================
-# DIVERSITY ENFORCEMENT
+# SCORE BOOSTING
+# =========================================================
+
+
+def apply_intent_boost(
+    item: dict[str, Any],
+    intent: dict[str, bool],
+) -> float:
+
+    text = build_searchable_text(item)
+
+    boost = 0.0
+
+    # =====================================================
+    # FRONTEND
+    # =====================================================
+
+    if (
+        intent["frontend"]
+        and contains_any(
+            text,
+            FRONTEND_KEYWORDS,
+        )
+    ):
+        boost += 0.32
+
+    # =====================================================
+    # BACKEND
+    # =====================================================
+
+    if (
+        intent["backend"]
+        and contains_any(
+            text,
+            BACKEND_KEYWORDS,
+        )
+    ):
+        boost += 0.30
+
+    # =====================================================
+    # DATA SCIENCE
+    # =====================================================
+
+    if (
+        intent["data_science"]
+        and contains_any(
+            text,
+            DATA_SCIENCE_KEYWORDS,
+        )
+    ):
+        boost += 0.35
+
+    # =====================================================
+    # COMMUNICATION
+    # =====================================================
+
+    if (
+        intent["communication"]
+        and contains_any(
+            text,
+            COMMUNICATION_KEYWORDS,
+        )
+    ):
+        boost += 0.35
+
+    # =====================================================
+    # LEADERSHIP
+    # =====================================================
+
+    if (
+        intent["leadership"]
+        and contains_any(
+            text,
+            LEADERSHIP_KEYWORDS,
+        )
+    ):
+        boost += 0.28
+
+    # =====================================================
+    # COGNITIVE
+    # =====================================================
+
+    if (
+        intent["cognitive"]
+        and (
+            contains_any(
+                text,
+                COGNITIVE_KEYWORDS,
+            )
+            or item.get("test_type") == "A"
+        )
+    ):
+        boost += 0.25
+
+    return round(boost, 4)
+
+
+# =========================================================
+# ENRICH RESULT
+# =========================================================
+
+
+def enrich_result(
+    item: dict[str, Any],
+    intent: dict[str, bool],
+) -> dict[str, Any]:
+
+    enriched = dict(item)
+
+    base_score = safe_float(
+        item.get("score", 0.0)
+    )
+
+    boost = apply_intent_boost(
+        item,
+        intent,
+    )
+
+    test_type = item.get(
+        "test_type",
+        "K",
+    )
+
+    type_weight = TEST_TYPE_WEIGHTS.get(
+        test_type,
+        1.0,
+    )
+
+    final_score = min(
+        (
+            base_score + boost
+        ) * type_weight,
+        1.0,
+    )
+
+    final_score = round(
+        final_score,
+        4,
+    )
+
+    confidence = calibrate_confidence(
+        final_score
+    )
+
+    enriched["score"] = final_score
+
+    enriched["confidence"] = confidence
+
+    enriched[
+        "high_confidence"
+    ] = (
+        confidence
+        >= HIGH_CONFIDENCE_THRESHOLD
+    )
+
+    enriched[
+        "recommendation_strength"
+    ] = infer_strength(
+        confidence
+    )
+
+    enriched[
+        "explanation"
+    ] = build_explanation(
+        enriched,
+        intent,
+    )
+
+    # =====================================================
+    # FRONTEND SAFE DEFAULTS
+    # =====================================================
+
+    defaults = {
+        "matched_roles": [],
+        "matched_domains": [],
+        "matched_competencies": [],
+        "domains": [],
+        "roles": [],
+        "job_levels": [],
+        "languages": [],
+        "duration": None,
+        "remote": None,
+        "adaptive": None,
+        "retrieval_metadata": None,
+    }
+
+    for key, value in defaults.items():
+        enriched.setdefault(key, value)
+
+    return enriched
+
+
+# =========================================================
+# DIVERSITY
 # =========================================================
 
 
@@ -657,21 +772,29 @@ def enforce_diversity(
         dict[str, Any]
     ] = []
 
-    type_counts = defaultdict(int)
-
     seen_names: set[str] = set()
+
+    type_counts = defaultdict(int)
 
     for item in results:
 
-        name = item.get(
-            "name",
-            "",
+        raw_name = normalize(
+            item.get("name", "")
         )
 
-        if name in seen_names:
+        root_name = (
+            raw_name
+            .replace("(new)", "")
+            .replace("adaptive", "")
+            .replace("pro", "")
+            .replace("interactive", "")
+            .strip()
+        )
+
+        if root_name in seen_names:
             continue
 
-        seen_names.add(name)
+        seen_names.add(root_name)
 
         test_type = item.get(
             "test_type",
@@ -703,56 +826,6 @@ def enforce_diversity(
 
 
 # =========================================================
-# ENRICH RESULTS
-# =========================================================
-
-
-def enrich_result(
-    item: dict[str, Any],
-    intent: dict[str, bool],
-) -> dict[str, Any]:
-
-    enriched = dict(item)
-
-    score = safe_float(
-        enriched.get("score", 0.0)
-    )
-
-    confidence = calibrate_confidence(
-        score
-    )
-
-    enriched["score"] = round(
-        score,
-        4,
-    )
-
-    enriched["confidence"] = confidence
-
-    enriched[
-        "high_confidence"
-    ] = (
-        confidence
-        >= HIGH_CONFIDENCE_THRESHOLD
-    )
-
-    enriched[
-        "recommendation_strength"
-    ] = infer_strength(
-        confidence
-    )
-
-    enriched[
-        "explanation"
-    ] = build_explanation(
-        enriched,
-        intent,
-    )
-
-    return enriched
-
-
-# =========================================================
 # MAIN PIPELINE
 # =========================================================
 
@@ -768,11 +841,6 @@ def generate_recommendations(
         results = results or []
         context = context or {}
 
-        logger.info(
-            "Incoming retrieval results: %s",
-            len(results),
-        )
-
         if not results:
 
             logger.warning(
@@ -780,6 +848,11 @@ def generate_recommendations(
             )
 
             return []
+
+        logger.info(
+            "Incoming retrieval results: %s",
+            len(results),
+        )
 
         # =================================================
         # QUERY INTENT
@@ -799,16 +872,11 @@ def generate_recommendations(
         )
 
         logger.info(
-            "Reranker returned %s items",
+            "Reranked results count: %s",
             len(ranked_results),
         )
 
         if not ranked_results:
-
-            logger.warning(
-                "No reranked results generated."
-            )
-
             return []
 
         # =================================================
@@ -836,7 +904,7 @@ def generate_recommendations(
         if not filtered_results:
 
             logger.warning(
-                "Strict filtering removed all results. Using fallback recommendations."
+                "No strict matches found. Using fallback results."
             )
 
             filtered_results = ranked_results[
@@ -855,11 +923,6 @@ def generate_recommendations(
             for item in filtered_results
         ]
 
-        logger.info(
-            "Enriched results count: %s",
-            len(enriched_results),
-        )
-
         # =================================================
         # VALIDATE
         # =================================================
@@ -870,31 +933,14 @@ def generate_recommendations(
             )
         )
 
-        logger.info(
-            "Validated results count: %s",
-            len(validated_results),
-        )
-
-        # =================================================
-        # VALIDATION FALLBACK
-        # =================================================
-
         if not validated_results:
-
-            logger.warning(
-                "Validation removed all recommendations. Using safe fallback."
-            )
-
-            validated_results = enriched_results[
-                :FINAL_RECOMMENDATIONS
-            ]
+            validated_results = enriched_results
 
         # =================================================
         # SORT
         # =================================================
 
-        validated_results = sorted(
-            validated_results,
+        validated_results.sort(
             key=lambda x: safe_float(
                 x.get("score", 0.0)
             ),
@@ -910,19 +956,22 @@ def generate_recommendations(
         )
 
         logger.info(
-            "Generated final recommendations: %s",
-            len(final_results),
-        )
-
-        logger.info(
-            "Final recommendation names: %s",
+            "Final recommendations: %s",
             [
-                item.get("name")
+                {
+                    "name": item.get("name"),
+                    "score": item.get("score"),
+                    "confidence": item.get(
+                        "confidence"
+                    ),
+                }
                 for item in final_results
             ],
         )
 
-        return final_results
+        return final_results[
+            :FINAL_RECOMMENDATIONS
+        ]
 
     except Exception as error:
 

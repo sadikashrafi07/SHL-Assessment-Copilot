@@ -1,94 +1,335 @@
-import json
-import re
+# =========================================================
+# app/services/comparison.py
+# Production-Grade Assessment Comparison Engine
+# =========================================================
 
-CATALOG_PATH = "data/cleaned_catalog.json"
+from __future__ import annotations
 
+import logging
+from typing import Any
 
-with open(CATALOG_PATH, "r") as f:
-    CATALOG = json.load(f)
+from app.models.schemas import Recommendation
 
+logger = logging.getLogger(__name__)
 
-COMPARISON_KEYWORDS = [
-    "compare",
-    "difference",
-    "vs",
-    "versus"
-]
+# =========================================================
+# TEST TYPE LABELS
+# =========================================================
 
+TEST_TYPE_LABELS = {
+    "K": "Knowledge",
+    "P": "Personality",
+    "A": "Cognitive Ability",
+    "S": "Situational Judgement",
+    "L": "Leadership",
+}
 
-def extract_comparison_targets(user_message: str):
-
-    text = user_message.lower()
-
-    if " vs " in text:
-        parts = text.split(" vs ")
-
-    elif " versus " in text:
-        parts = text.split(" versus ")
-
-    else:
-        cleaned = text
-
-        for keyword in COMPARISON_KEYWORDS:
-            cleaned = cleaned.replace(keyword, "")
-
-        parts = re.split(r",|and", cleaned)
-
-    targets = [
-        part.strip()
-        for part in parts
-        if part.strip()
-    ]
-
-    return targets[:2]
+# =========================================================
+# SAFE ACCESS
+# =========================================================
 
 
-def find_assessment_by_name(name: str):
+def safe_get(
+    item: Any,
+    field: str,
+    default: Any = None,
+) -> Any:
 
-    for item in CATALOG:
+    # =====================================================
+    # DICT
+    # =====================================================
 
-        if name.lower() in item["name"].lower():
-            return item
+    if isinstance(item, dict):
 
-    return None
+        return item.get(
+            field,
+            default,
+        )
 
+    # =====================================================
+    # PYDANTIC MODEL
+    # =====================================================
 
-def compare_assessments(user_message: str):
-
-    targets = extract_comparison_targets(
-        user_message
+    return getattr(
+        item,
+        field,
+        default,
     )
 
-    if len(targets) < 2:
-        return (
-            "Please specify two SHL assessments to compare."
+
+# =========================================================
+# SAFE STRING
+# =========================================================
+
+
+def safe_str(
+    value: Any,
+    fallback: str = "Not specified",
+) -> str:
+
+    if value is None:
+        return fallback
+
+    value = str(value).strip()
+
+    if not value:
+        return fallback
+
+    return value
+
+
+# =========================================================
+# FORMAT ASSESSMENT
+# =========================================================
+
+
+def format_assessment(
+    assessment: Recommendation | dict,
+    index: int,
+) -> str:
+
+    name = safe_str(
+        safe_get(
+            assessment,
+            "name",
+        )
+    )
+
+    raw_test_type = safe_str(
+        safe_get(
+            assessment,
+            "test_type",
+            "K",
+        )
+    )
+
+    test_type = TEST_TYPE_LABELS.get(
+        raw_test_type,
+        raw_test_type,
+    )
+
+    confidence = safe_get(
+        assessment,
+        "confidence",
+        0,
+    )
+
+    strength = safe_str(
+        safe_get(
+            assessment,
+            "recommendation_strength",
+            "medium",
+        )
+    )
+
+    description = safe_str(
+        safe_get(
+            assessment,
+            "description",
+        )
+    )
+
+    explanation = safe_str(
+        safe_get(
+            assessment,
+            "explanation",
+        )
+    )
+
+    try:
+
+        confidence_percent = round(
+            float(confidence) * 100,
+            1,
         )
 
-    first = find_assessment_by_name(targets[0])
-    second = find_assessment_by_name(targets[1])
+    except Exception:
 
-    if not first or not second:
-        return (
-            "I could not find both assessments in the SHL catalog."
-        )
+        confidence_percent = 0.0
 
-    comparison = f"""
-Assessment Comparison
+    return f"""
+OPTION {index}
 
-1. {first['name']}
-- Test Type: {first['test_type']}
-- Duration: {first.get('duration', 'Unknown')}
-- Competencies: {', '.join(first.get('keys', []))}
-- URL: {first['url']}
+Assessment Name:
+{name}
 
-2. {second['name']}
-- Test Type: {second['test_type']}
-- Duration: {second.get('duration', 'Unknown')}
-- Competencies: {', '.join(second.get('keys', []))}
-- URL: {second['url']}
+Assessment Type:
+{test_type}
 
-Key Difference:
-{first['name']} is more focused on {', '.join(first.get('keys', [])[:3])}, while {second['name']} emphasizes {', '.join(second.get('keys', [])[:3])}.
+Confidence Score:
+{confidence_percent}%
+
+Recommendation Strength:
+{strength.title()}
+
+Description:
+{description}
+
+Why This Assessment Fits:
+{explanation}
 """
 
-    return comparison.strip()
+
+# =========================================================
+# BEST MATCH
+# =========================================================
+
+
+def determine_best_match(
+    recommendations: list[
+        Recommendation | dict
+    ],
+) -> Recommendation | dict | None:
+
+    if not recommendations:
+        return None
+
+    sorted_items = sorted(
+        recommendations,
+        key=lambda x: (
+
+            safe_get(
+                x,
+                "confidence",
+                0,
+            ),
+
+            safe_get(
+                x,
+                "score",
+                0,
+            ),
+        ),
+        reverse=True,
+    )
+
+    return sorted_items[0]
+
+
+# =========================================================
+# MAIN COMPARISON
+# =========================================================
+
+
+def compare_assessments(
+    recommendations: list[
+        Recommendation | dict
+    ],
+) -> str:
+
+    logger.info(
+        "Running assessment comparison"
+    )
+
+    # =====================================================
+    # EMPTY
+    # =====================================================
+
+    if not recommendations:
+
+        return (
+            "I could not find enough "
+            "relevant SHL assessments "
+            "to compare."
+        )
+
+    # =====================================================
+    # SINGLE RESULT
+    # =====================================================
+
+    if len(recommendations) == 1:
+
+        item = recommendations[0]
+
+        return (
+            f"I found one highly relevant "
+            f"assessment recommendation:\n\n"
+            f"{safe_get(item, 'name')}.\n\n"
+            f"This assessment is currently "
+            f"the strongest overall match "
+            f"for the provided hiring "
+            f"requirements."
+        )
+
+    # =====================================================
+    # SORT RESULTS
+    # =====================================================
+
+    sorted_items = sorted(
+        recommendations,
+        key=lambda x: (
+
+            safe_get(
+                x,
+                "confidence",
+                0,
+            ),
+
+            safe_get(
+                x,
+                "score",
+                0,
+            ),
+        ),
+        reverse=True,
+    )
+
+    # =====================================================
+    # BUILD RESPONSE
+    # =====================================================
+
+    sections: list[str] = []
+
+    sections.append(
+        "Here is a detailed comparison "
+        "of the most relevant SHL "
+        "assessments:\n"
+    )
+
+    for idx, item in enumerate(
+        sorted_items,
+        start=1,
+    ):
+
+        sections.append(
+            "=================================================="
+        )
+
+        sections.append(
+            format_assessment(
+                item,
+                idx,
+            )
+        )
+
+    # =====================================================
+    # BEST MATCH
+    # =====================================================
+
+    best = determine_best_match(
+        sorted_items
+    )
+
+    if best:
+
+        sections.append(
+            "=================================================="
+        )
+
+        sections.append(
+            "BEST OVERALL RECOMMENDATION"
+        )
+
+        sections.append(
+            "=================================================="
+        )
+
+        sections.append(
+            f"{safe_get(best, 'name')} "
+            f"is the strongest overall "
+            f"recommendation based on "
+            f"confidence score, role alignment, "
+            f"and competency relevance."
+        )
+
+    return "\n".join(sections)
