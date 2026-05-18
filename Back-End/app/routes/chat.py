@@ -1,7 +1,7 @@
 # =========================================================
 # app/routes/chat.py
 # Production-Grade Enterprise Chat Endpoint
-# FULLY FIXED VERSION
+# FULLY FIXED ENTERPRISE VERSION
 # =========================================================
 
 from __future__ import annotations
@@ -64,6 +64,29 @@ logger = logging.getLogger(__name__)
 # =========================================================
 
 router = APIRouter()
+
+# =========================================================
+# CONSTANTS
+# =========================================================
+
+GREETING_WORDS = {
+    "hi",
+    "hii",
+    "hiii",
+    "hello",
+    "hey",
+    "heyy",
+    "hy",
+    "hyy",
+    "yo",
+    "hola",
+    "sup",
+
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "good night",
+}
 
 # =========================================================
 # HEALTH
@@ -165,6 +188,101 @@ def normalize_string_list(
 
 
 # =========================================================
+# GREETING CHECK
+# =========================================================
+
+
+def is_greeting_message(
+    message: str,
+) -> bool:
+
+    """
+    Detect casual greeting messages safely.
+    Supports:
+    - hi
+    - hello there
+    - hey buddy
+    - good morning
+    - hii
+    """
+
+    message = str(
+        message or ""
+    ).strip().lower()
+
+    if not message:
+        return False
+
+    # =====================================================
+    # EXACT MATCH
+    # =====================================================
+
+    if message in GREETING_WORDS:
+        return True
+
+    # =====================================================
+    # STARTS WITH GREETING
+    # =====================================================
+
+    for greeting in GREETING_WORDS:
+
+        if message.startswith(
+            greeting + " "
+        ):
+            return True
+
+    # =====================================================
+    # SHORT CASUAL GREETINGS
+    # =====================================================
+
+    short_patterns = [
+        "hello there",
+        "hy",
+        "hyy",
+        "heyy",
+        "hiii",
+        "yo bro",
+        "hey shl",
+        "hi shl",
+        "hello shl",
+        "hey there",
+        "hi there",
+        "hey buddy",
+        "hi buddy",
+        "hello buddy",
+        "hello shl",
+        "hi shl",
+    ]
+
+    return message in short_patterns
+
+
+# =========================================================
+# GREETING RESPONSE
+# =========================================================
+
+def build_greeting_response() -> str:
+
+    return (
+        "Hello! 👋\n\n"
+        "I am your SHL Assessment Copilot.\n\n"
+        "I can help you with:\n"
+        "• SHL assessment recommendations\n"
+        "• Technical hiring evaluations\n"
+        "• Personality and leadership assessments\n"
+        "• Cognitive and aptitude testing\n"
+        "• Role-based assessment selection\n"
+        "• Assessment comparisons\n\n"
+        "You can ask things like:\n"
+        "• Python developer assessment\n"
+        "• Leadership test for engineering managers\n"
+        "• Java backend hiring assessment\n"
+        "• Cognitive test for analysts\n"
+        "• Compare coding vs aptitude assessments\n\n"
+        "How can I help you today?"
+    )
+
+# =========================================================
 # NORMALIZE RECOMMENDATIONS
 # =========================================================
 
@@ -187,7 +305,7 @@ def normalize_recommendations(
         try:
 
             # =====================================================
-            # ALREADY PYDANTIC MODEL
+            # ALREADY MODEL
             # =====================================================
 
             if isinstance(
@@ -251,10 +369,6 @@ def normalize_recommendations(
 
             recommendation = Recommendation(
 
-                # =================================================
-                # REQUIRED
-                # =================================================
-
                 name=name,
 
                 url=item.get("url"),
@@ -262,10 +376,6 @@ def normalize_recommendations(
                 test_type=normalize_test_type(
                     item.get("test_type")
                 ),
-
-                # =================================================
-                # OPTIONAL
-                # =================================================
 
                 description=str(
                     item.get(
@@ -391,15 +501,6 @@ def build_chat_response(
     end_of_conversation: bool = False,
 ) -> ChatResponse:
 
-    """
-    IMPORTANT:
-    Only send fields that EXIST
-    inside ChatResponse schema.
-
-    This prevents Pydantic v2
-    extra_forbidden crashes.
-    """
-
     return ChatResponse(
         reply=reply,
         recommendations=recommendations,
@@ -415,15 +516,20 @@ def build_chat_response(
 def build_offtopic_response() -> str:
 
     return (
-        "Please ask queries related to SHL assessments, "
-        "candidate evaluation, hiring assessments, "
-        "technical screening, personality testing, "
-        "leadership evaluation, or role-based hiring.\n\n"
+        "I can assist only with SHL assessment and "
+        "hiring-related queries.\n\n"
+        "Supported areas:\n"
+        "• Technical assessments\n"
+        "• Personality assessments\n"
+        "• Leadership evaluations\n"
+        "• Cognitive testing\n"
+        "• Hiring recommendations\n"
+        "• Assessment comparisons\n\n"
         "Example queries:\n"
-        "- Python developer assessment\n"
-        "- Cognitive test for analysts\n"
-        "- Leadership assessment for managers\n"
-        "- Java backend developer hiring test"
+        "• Python developer assessment\n"
+        "• Leadership test for managers\n"
+        "• Cognitive assessment for analysts\n"
+        "• Java backend developer hiring test"
     )
 
 
@@ -438,10 +544,10 @@ def build_empty_search_response() -> str:
         "I could not identify enough hiring or "
         "assessment-related information.\n\n"
         "Please include:\n"
-        "- Role\n"
-        "- Skills\n"
-        "- Seniority\n"
-        "- Assessment type\n\n"
+        "• Target role\n"
+        "• Skills\n"
+        "• Seniority\n"
+        "• Assessment type\n\n"
         "Example:\n"
         "'Senior Python Developer technical assessment'"
     )
@@ -473,10 +579,6 @@ async def chat(
         # =====================================================
 
         if not request.messages:
-
-            logger.warning(
-                "Empty messages received"
-            )
 
             return build_chat_response(
                 reply=(
@@ -512,15 +614,29 @@ async def chat(
 
         if not latest_user_message:
 
-            logger.warning(
-                "User message empty"
-            )
-
             return build_chat_response(
                 reply=(
                     "Please provide a valid "
                     "job requirement or hiring query."
                 ),
+                recommendations=[],
+                end_of_conversation=False,
+            )
+
+        # =====================================================
+        # GREETING HANDLING
+        # =====================================================
+
+        if is_greeting_message(
+            latest_user_message
+        ):
+
+            logger.info(
+                "Greeting message detected"
+            )
+
+            return build_chat_response(
+                reply=build_greeting_response(),
                 recommendations=[],
                 end_of_conversation=False,
             )
@@ -557,14 +673,10 @@ async def chat(
         )
 
         # =====================================================
-        # STRICT OFFTOPIC FILTER
+        # OFFTOPIC
         # =====================================================
 
         if intent == "offtopic":
-
-            logger.info(
-                "Offtopic query blocked"
-            )
 
             return build_chat_response(
                 reply=build_offtopic_response(),
@@ -584,24 +696,6 @@ async def chat(
             "Extracted context: %s",
             context,
         )
-
-        # =====================================================
-        # SECONDARY OFFTOPIC PROTECTION
-        # =====================================================
-
-        if context.get(
-            "intent"
-        ) == "offtopic":
-
-            logger.info(
-                "Context marked query as offtopic"
-            )
-
-            return build_chat_response(
-                reply=build_offtopic_response(),
-                recommendations=[],
-                end_of_conversation=False,
-            )
 
         # =====================================================
         # CLARIFICATION
@@ -634,10 +728,6 @@ async def chat(
 
         if clarification_offtopic:
 
-            logger.info(
-                "Clarification returned offtopic"
-            )
-
             return build_chat_response(
                 reply=build_offtopic_response(),
                 recommendations=[],
@@ -657,10 +747,6 @@ async def chat(
                         [],
                     )
                 )
-            )
-
-            logger.info(
-                "Clarification requested"
             )
 
             return build_chat_response(
@@ -694,10 +780,6 @@ async def chat(
 
         if not search_query:
 
-            logger.warning(
-                "Search query empty"
-            )
-
             return build_chat_response(
                 reply=build_empty_search_response(),
                 recommendations=[],
@@ -730,10 +812,6 @@ async def chat(
 
         if not raw_results:
 
-            logger.warning(
-                "No retrieval results"
-            )
-
             return build_chat_response(
                 reply=(
                     "I could not find sufficiently "
@@ -747,10 +825,6 @@ async def chat(
         # =====================================================
         # GENERATE RECOMMENDATIONS
         # =====================================================
-
-        logger.info(
-            "Generating recommendations"
-        )
 
         recommendations = await run_in_threadpool(
             generate_recommendations,
@@ -782,14 +856,10 @@ async def chat(
         )
 
         # =====================================================
-        # FINAL EMPTY CHECK
+        # EMPTY RESULTS
         # =====================================================
 
         if not recommendations:
-
-            logger.warning(
-                "Recommendations empty after normalization"
-            )
 
             return build_chat_response(
                 reply=(
@@ -817,20 +887,6 @@ async def chat(
                 )
             )
 
-            response_time_ms = round(
-                (
-                    time.perf_counter()
-                    - start_time
-                )
-                * 1000,
-                2,
-            )
-
-            logger.info(
-                "Comparison completed in %sms",
-                response_time_ms,
-            )
-
             return build_chat_response(
                 reply=comparison_reply,
                 recommendations=recommendations,
@@ -854,10 +910,6 @@ async def chat(
                 context,
                 intent,
             )
-
-            # =================================================
-            # EMPTY RESPONSE PROTECTION
-            # =================================================
 
             if not reply:
 
@@ -915,11 +967,6 @@ async def chat(
         logger.info(
             "Response time: %sms",
             response_time_ms,
-        )
-
-        logger.info(
-            "Final recommendation count: %s",
-            len(recommendations),
         )
 
         # =====================================================

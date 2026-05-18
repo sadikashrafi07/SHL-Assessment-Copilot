@@ -1,6 +1,7 @@
 # =========================================================
 # app/services/conversation.py
 # Production-Grade Conversation Understanding Engine
+# FULLY FIXED ENTERPRISE VERSION
 # =========================================================
 
 from __future__ import annotations
@@ -45,6 +46,33 @@ END_WORDS = {
     "goodbye",
     "perfect",
     "great",
+}
+
+# =========================================================
+# GREETING WORDS
+# =========================================================
+
+GREETING_WORDS = {
+    "hi",
+    "hello",
+    "hey",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "yo",
+    "hola",
+}
+
+# =========================================================
+# HELP WORDS
+# =========================================================
+
+HELP_WORDS = {
+    "help",
+    "what can you do",
+    "how can you help",
+    "features",
+    "capabilities",
 }
 
 # =========================================================
@@ -94,6 +122,7 @@ OFFTOPIC_WORDS = {
     "tourism",
     "travel",
     "hotel",
+    "news",
 }
 
 # =========================================================
@@ -102,18 +131,38 @@ OFFTOPIC_WORDS = {
 
 DOMAIN_KEYWORDS = {
 
+    # =====================================================
     # Hiring
+    # =====================================================
+
     "assessment",
     "assessment test",
+    "assessment recommendation",
+    "assessment recommendations",
+
+    "test",
+    "testing",
+
     "hiring",
     "recruitment",
+    "recruiting",
+
     "candidate",
+    "candidate screening",
+    "screening",
+
     "interview",
+    "evaluation",
+    "hiring evaluation",
+
     "job",
     "role",
     "position",
 
+    # =====================================================
     # Assessment Types
+    # =====================================================
+
     "technical assessment",
     "coding assessment",
     "personality assessment",
@@ -121,7 +170,10 @@ DOMAIN_KEYWORDS = {
     "cognitive assessment",
     "aptitude test",
 
+    # =====================================================
     # Roles
+    # =====================================================
+
     "developer",
     "engineer",
     "manager",
@@ -129,7 +181,10 @@ DOMAIN_KEYWORDS = {
     "analyst",
     "designer",
 
+    # =====================================================
     # Skills
+    # =====================================================
+
     "python",
     "java",
     "sql",
@@ -378,6 +433,105 @@ def normalize_text(text: Any) -> str:
     return text.strip()
 
 # =========================================================
+# EXTRACTION HELPERS
+# =========================================================
+
+def deduplicate(
+    items: list[str],
+) -> list[str]:
+    """
+    Deterministic deduplication.
+    """
+
+    cleaned: list[str] = []
+
+    for item in items:
+
+        value = normalize_text(item)
+
+        if value and value not in cleaned:
+            cleaned.append(value)
+
+    return cleaned
+
+
+def extract_roles(
+    text: str,
+) -> list[str]:
+    """
+    Extract role mentions.
+    """
+
+    text = normalize_text(text)
+
+    found: list[str] = []
+
+    for role in ROLE_PATTERNS:
+
+        if regex_match(role, text):
+            found.append(role)
+
+    return deduplicate(found)
+
+
+def extract_seniority(
+    text: str,
+) -> str | None:
+    """
+    Extract seniority level.
+    """
+
+    text = normalize_text(text)
+
+    for level in SENIORITY_PATTERNS:
+
+        if regex_match(level, text):
+            return level
+
+    return None
+
+
+def extract_assessment_types(
+    text: str,
+) -> list[str]:
+    """
+    Extract assessment types.
+    """
+
+    text = normalize_text(text)
+
+    found: list[str] = []
+
+    for assessment_type in ASSESSMENT_TYPES:
+
+        if regex_match(
+            assessment_type,
+            text,
+        ):
+            found.append(assessment_type)
+
+    return deduplicate(found)
+
+
+def extract_skills(
+    text: str,
+) -> list[str]:
+    """
+    Extract technical + professional skills.
+    """
+
+    text = normalize_text(text)
+
+    found: list[str] = []
+
+    for skill in SKILL_PATTERNS:
+
+        if regex_match(skill, text):
+            found.append(skill)
+
+    return deduplicate(found)
+
+# =========================================================
 # DOMAIN VALIDATION
 # =========================================================
 
@@ -393,6 +547,22 @@ def is_relevant_query(
 
     if not text:
         return False
+
+    # =====================================================
+    # GREETINGS + HELP ARE ALLOWED
+    # =====================================================
+
+    if any(
+        regex_match(word, text)
+        for word in GREETING_WORDS
+    ):
+        return True
+
+    if any(
+        regex_match(word, text)
+        for word in HELP_WORDS
+    ):
+        return True
 
     # =====================================================
     # HARDCODED OFFTOPIC FILTER
@@ -508,6 +678,26 @@ def detect_intent(
         return "recommendation"
 
     # =====================================================
+    # GREETING
+    # =====================================================
+
+    if any(
+        regex_match(word, latest)
+        for word in GREETING_WORDS
+    ):
+        return "greeting"
+
+    # =====================================================
+    # HELP
+    # =====================================================
+
+    if any(
+        regex_match(word, latest)
+        for word in HELP_WORDS
+    ):
+        return "help"
+
+    # =====================================================
     # DOMAIN VALIDATION
     # =====================================================
 
@@ -542,102 +732,6 @@ def detect_intent(
 # =========================================================
 # EXTRACTION HELPERS
 # =========================================================
-
-def deduplicate(
-    items: list[str],
-) -> list[str]:
-    """
-    Deterministic deduplication.
-    """
-
-    cleaned = []
-
-    for item in items:
-
-        value = normalize_text(item)
-
-        if value and value not in cleaned:
-            cleaned.append(value)
-
-    return cleaned
-
-
-def extract_roles(
-    text: str,
-) -> list[str]:
-    """
-    Extract role mentions.
-    """
-
-    text = normalize_text(text)
-
-    found: list[str] = []
-
-    for role in ROLE_PATTERNS:
-
-        if regex_match(role, text):
-            found.append(role)
-
-    return deduplicate(found)
-
-
-def extract_seniority(
-    text: str,
-) -> str | None:
-    """
-    Extract seniority level.
-    """
-
-    text = normalize_text(text)
-
-    for level in SENIORITY_PATTERNS:
-
-        if regex_match(level, text):
-            return level
-
-    return None
-
-
-def extract_assessment_types(
-    text: str,
-) -> list[str]:
-    """
-    Extract assessment types.
-    """
-
-    text = normalize_text(text)
-
-    found = []
-
-    for assessment_type in ASSESSMENT_TYPES:
-
-        if regex_match(
-            assessment_type,
-            text,
-        ):
-            found.append(assessment_type)
-
-    return deduplicate(found)
-
-
-def extract_skills(
-    text: str,
-) -> list[str]:
-    """
-    Extract technical + professional skills.
-    """
-
-    text = normalize_text(text)
-
-    found: list[str] = []
-
-    for skill in SKILL_PATTERNS:
-
-        if regex_match(skill, text):
-            found.append(skill)
-
-    return deduplicate(found)
-
 
 def extract_duration_constraint(
     text: str,
@@ -879,21 +973,17 @@ def should_ask_clarification(
     Determine whether clarification is needed.
     """
 
-    # =====================================================
-    # OFFTOPIC
-    # =====================================================
-
-    if context.get("intent") == "offtopic":
+    if context.get("intent") in {
+        "offtopic",
+        "greeting",
+        "help",
+    }:
 
         return {
             "needed": False,
             "missing_fields": [],
-            "offtopic": True,
+            "offtopic": False,
         }
-
-    # =====================================================
-    # VALID SIGNALS
-    # =====================================================
 
     has_signal = any(
         [
@@ -914,10 +1004,6 @@ def should_ask_clarification(
             "missing_fields": [],
             "offtopic": False,
         }
-
-    # =====================================================
-    # AVOID INFINITE LOOPS
-    # =====================================================
 
     if len(messages) >= 4:
 
@@ -945,23 +1031,13 @@ def generate_clarification_question(
     Generate clarification question safely.
     """
 
-    # =====================================================
-    # OFFTOPIC RESPONSE
-    # =====================================================
-
     if offtopic:
 
         return (
             "Please ask queries related to "
             "SHL assessments, hiring roles, "
-            "skills, or competency evaluation. "
-            "Examples: Python developer assessment, "
-            "leadership assessment, cognitive test."
+            "skills, or competency evaluation."
         )
-
-    # =====================================================
-    # NORMAL CLARIFICATION
-    # =====================================================
 
     return (
         "Could you share the target role, "
@@ -981,7 +1057,11 @@ def build_search_query(
     Build optimized retrieval query.
     """
 
-    if context.get("intent") == "offtopic":
+    if context.get("intent") in {
+        "offtopic",
+        "greeting",
+        "help",
+    }:
         return ""
 
     parts: list[str] = []
@@ -1072,17 +1152,10 @@ def detect_conversation_end(
         get_latest_user_message(messages)
     )
 
-    if any(
-        regex_match(word, latest)
-        for word in END_WORDS
-    ):
-        return True
-
-    if (
-        not recommendations
-        and detect_intent(messages)
-        == "offtopic"
-    ):
-        return True
-
-    return False
+    return bool(
+        recommendations
+        and any(
+            regex_match(word, latest)
+            for word in END_WORDS
+        )
+    )
