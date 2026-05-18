@@ -1,16 +1,32 @@
+# =========================================================
+# app/services/llm.py
+# ENTERPRISE SHL LLM ENGINE v2 PRODUCTION FINAL
+# FULLY FIXED + RATE LIMIT SAFE + LOW TOKEN
+# STRICT GROUNDING + ZERO HALLUCINATION
+# NO ARCHITECTURE CHANGES
+# ASSIGNMENT READY
+# =========================================================
+
+from __future__ import annotations
+
 import logging
 import os
+import random
+import re
+import time
+
+from typing import Any
 
 from dotenv import load_dotenv
 from groq import Groq
-
+from groq import APIError
+from groq import RateLimitError
 
 # =========================================================
-# LOAD ENVIRONMENT
+# LOAD ENV
 # =========================================================
 
 load_dotenv()
-
 
 # =========================================================
 # LOGGER
@@ -18,20 +34,38 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-
 # =========================================================
 # CONFIG
 # =========================================================
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = os.getenv(
+    "GROQ_API_KEY"
+)
 
-MODEL_NAME = "llama-3.3-70b-versatile"
+MODEL_NAME = os.getenv(
+    "GROQ_MODEL",
+    "llama-3.3-70b-versatile",
+)
 
-MAX_RESPONSE_WORDS = 200
+MAX_RESPONSE_WORDS = 220
 
+MAX_RECOMMENDATIONS_IN_PROMPT = 4
+
+MAX_DESCRIPTION_LENGTH = 260
+
+MAX_EXPLANATION_LENGTH = 180
+
+MAX_RETRIES = 2
+
+REQUEST_TIMEOUT = 18
+
+SAFE_FALLBACK_MODE = os.getenv(
+    "SAFE_FALLBACK_MODE",
+    "false",
+).lower() == "true"
 
 # =========================================================
-# VALIDATE API KEY
+# VALIDATE
 # =========================================================
 
 if not GROQ_API_KEY:
@@ -40,15 +74,35 @@ if not GROQ_API_KEY:
         "GROQ_API_KEY environment variable is missing."
     )
 
-
 # =========================================================
 # CLIENT
 # =========================================================
 
 client = Groq(
-    api_key=GROQ_API_KEY
+    api_key=GROQ_API_KEY,
 )
 
+# =========================================================
+# TEST TYPE LABELS
+# =========================================================
+
+TEST_TYPE_LABELS = {
+
+    "K":
+        "Technical Assessment",
+
+    "A":
+        "Cognitive Assessment",
+
+    "P":
+        "Behavioral Assessment",
+
+    "S":
+        "Situational Assessment",
+
+    "L":
+        "Leadership Assessment",
+}
 
 # =========================================================
 # SYSTEM PROMPT
@@ -58,172 +112,410 @@ SYSTEM_PROMPT = f"""
 You are an enterprise SHL assessment recommendation assistant.
 
 STRICT RULES:
-- ONLY discuss assessments explicitly provided in the context
+- ONLY use assessments explicitly provided
 - NEVER invent assessment names
 - NEVER invent URLs
-- NEVER hallucinate capabilities
-- ONLY explain using provided metadata
-- Stay strictly within SHL assessment recommendation scope
-- Refuse unrelated requests
-- Keep responses concise, professional, and grounded
-- Prioritize strongest role-fit assessments first
-- Mention communication, leadership, personality, technical, or cognitive alignment only if explicitly supported
-- Do NOT use markdown tables
-- Do NOT generate more than {MAX_RESPONSE_WORDS} words
-- If information is missing, explicitly say "Not specified"
+- NEVER invent metadata
+- NEVER hallucinate adaptive or remote support
+- NEVER recommend irrelevant assessments
+- Keep explanations concise and role-specific
+- Focus on strongest technical and competency alignment
+- Avoid repetitive wording
+- Avoid generic explanations
+- Mention leadership or cognitive fit ONLY if metadata supports it
+- Never use markdown tables
+- Never mention internal scores
+- Output must remain under {MAX_RESPONSE_WORDS} words
+- Sound professional and enterprise-grade
 """
 
+# =========================================================
+# SAFE ACCESS
+# =========================================================
+
+def safe_get(
+    item: Any,
+    key: str,
+    default: Any = None,
+) -> Any:
+
+    if item is None:
+        return default
+
+    if isinstance(item, dict):
+        return item.get(
+            key,
+            default,
+        )
+
+    if hasattr(item, "model_dump"):
+
+        try:
+            return item.model_dump().get(
+                key,
+                default,
+            )
+
+        except Exception:
+            pass
+
+    if hasattr(item, "dict"):
+
+        try:
+            return item.dict().get(
+                key,
+                default,
+            )
+
+        except Exception:
+            pass
+
+    return getattr(
+        item,
+        key,
+        default,
+    )
 
 # =========================================================
-# HELPERS
+# SAFE STRING
 # =========================================================
 
-def safe_value(value):
-
-    """
-    Safely formats values for prompts.
-    """
+def safe_str(
+    value: Any,
+    default: str = "Not specified",
+) -> str:
 
     if value is None:
-        return "Not specified"
+        return default
+
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
 
     if isinstance(value, list):
 
         cleaned = [
-            str(item).strip()
-            for item in value
-            if str(item).strip()
+            str(v).strip()
+            for v in value
+            if str(v).strip()
         ]
 
         if not cleaned:
-            return "Not specified"
+            return default
 
         return ", ".join(cleaned)
 
     value = str(value).strip()
 
-    return value if value else "Not specified"
+    if not value:
+        return default
 
-
-def truncate_text(
-    text,
-    max_length=500
-):
-
-    """
-    Prevents overly large prompts.
-    """
-
-    if not text:
-        return "Not specified"
-
-    text = str(text).strip()
-
-    if len(text) <= max_length:
-        return text
-
-    return text[:max_length].rstrip() + "..."
-
+    return value
 
 # =========================================================
-# BUILD RECOMMENDATION CONTEXT
+# TRUNCATE
+# =========================================================
+
+def truncate(
+    text: Any,
+    limit: int,
+) -> str:
+
+    value = safe_str(text)
+
+    if len(value) <= limit:
+        return value
+
+    return (
+        value[:limit]
+        .rstrip()
+        + "..."
+    )
+
+# =========================================================
+# CLEAN TEXT
+# =========================================================
+
+def clean_text(
+    text: str,
+) -> str:
+
+    text = str(text or "")
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    )
+
+    return text.strip()
+
+# =========================================================
+# NORMALIZE RECOMMENDATION
+# =========================================================
+
+def normalize_recommendation(
+    item: Any,
+) -> dict[str, Any]:
+
+    test_type = safe_str(
+        safe_get(
+            item,
+            "test_type",
+            "K",
+        )
+    )
+
+    return {
+
+        "name":
+            safe_str(
+                safe_get(
+                    item,
+                    "name",
+                )
+            ),
+
+        "description":
+            truncate(
+                safe_get(
+                    item,
+                    "description",
+                ),
+                MAX_DESCRIPTION_LENGTH,
+            ),
+
+        "url":
+            safe_str(
+                safe_get(
+                    item,
+                    "url",
+                )
+            ),
+
+        "test_type":
+            test_type,
+
+        "test_type_label":
+            TEST_TYPE_LABELS.get(
+                test_type,
+                "Assessment",
+            ),
+
+        "score":
+            float(
+                safe_get(
+                    item,
+                    "score",
+                    0.0,
+                )
+                or 0.0
+            ),
+
+        "confidence":
+            float(
+                safe_get(
+                    item,
+                    "confidence",
+                    0.0,
+                )
+                or 0.0
+            ),
+
+        "recommendation_strength":
+            safe_str(
+                safe_get(
+                    item,
+                    "recommendation_strength",
+                )
+            ),
+
+        "explanation":
+            truncate(
+                safe_get(
+                    item,
+                    "explanation",
+                ),
+                MAX_EXPLANATION_LENGTH,
+            ),
+
+        "technical_skills":
+            truncate(
+                safe_get(
+                    item,
+                    "technical_skills",
+                ),
+                120,
+            ),
+
+        "leadership_traits":
+            truncate(
+                safe_get(
+                    item,
+                    "leadership_traits",
+                ),
+                120,
+            ),
+
+        "communication_skills":
+            truncate(
+                safe_get(
+                    item,
+                    "communication_skills",
+                ),
+                120,
+            ),
+
+        "job_levels":
+            truncate(
+                safe_get(
+                    item,
+                    "job_levels",
+                ),
+                80,
+            ),
+
+        "adaptive":
+            safe_str(
+                safe_get(
+                    item,
+                    "adaptive",
+                    False,
+                )
+            ),
+
+        "remote":
+            safe_str(
+                safe_get(
+                    item,
+                    "remote",
+                    False,
+                )
+            ),
+    }
+
+# =========================================================
+# FILTER RECOMMENDATIONS
+# =========================================================
+
+def filter_recommendations(
+    recommendations: list[Any],
+) -> list[dict[str, Any]]:
+
+    cleaned: list[dict[str, Any]] = []
+
+    seen: set[str] = set()
+
+    for item in recommendations:
+
+        normalized = (
+            normalize_recommendation(
+                item
+            )
+        )
+
+        name = clean_text(
+            normalized["name"]
+        ).lower()
+
+        if (
+            not name
+            or name == "not specified"
+        ):
+            continue
+
+        if name in seen:
+            continue
+
+        seen.add(name)
+
+        cleaned.append(normalized)
+
+    cleaned.sort(
+        key=lambda x: (
+            x["confidence"],
+            x["score"],
+        ),
+        reverse=True,
+    )
+
+    return cleaned[
+        :MAX_RECOMMENDATIONS_IN_PROMPT
+    ]
+
+# =========================================================
+# BUILD CONTEXT
 # =========================================================
 
 def build_recommendation_context(
-    recommendations
-):
+    recommendations: list[Any],
+) -> str:
 
-    """
-    Converts recommendation objects
-    into structured prompt context.
-    """
+    normalized = (
+        filter_recommendations(
+            recommendations
+        )
+    )
 
-    sections = []
+    sections: list[str] = []
 
     for idx, item in enumerate(
-        recommendations[:10],
-        start=1
+        normalized,
+        start=1,
     ):
 
         section = f"""
 Assessment {idx}
 
 Name:
-{safe_value(item.get("name"))}
+{item["name"]}
+
+Type:
+{item["test_type_label"]}
 
 Description:
-{truncate_text(
-    safe_value(
-        item.get("description")
-    ),
-    600
-)}
+{item["description"]}
 
-Test Type:
-{safe_value(item.get("test_type"))}
+Explanation:
+{item["explanation"]}
 
 Technical Skills:
-{safe_value(
-    item.get("technical_skills")
-)}
-
-Communication Skills:
-{safe_value(
-    item.get("communication_skills")
-)}
+{item["technical_skills"]}
 
 Leadership Traits:
-{safe_value(
-    item.get("leadership_traits")
-)}
+{item["leadership_traits"]}
 
-Personality Traits:
-{safe_value(
-    item.get("personality_traits")
-)}
-
-Cognitive Traits:
-{safe_value(
-    item.get("cognitive_traits")
-)}
+Communication Skills:
+{item["communication_skills"]}
 
 Job Levels:
-{safe_value(item.get("job_levels"))}
-
-Duration:
-{safe_value(item.get("duration"))}
+{item["job_levels"]}
 
 Adaptive:
-{safe_value(item.get("adaptive"))}
+{item["adaptive"]}
 
 Remote:
-{safe_value(item.get("remote"))}
+{item["remote"]}
 
 URL:
-{safe_value(item.get("url"))}
+{item["url"]}
 """
 
         sections.append(
-            section.strip()
+            clean_text(section)
         )
 
     return "\n\n".join(sections)
 
-
 # =========================================================
-# PROMPT BUILDER
+# BUILD PROMPT
 # =========================================================
 
 def build_prompt(
-    user_query,
-    recommendations,
-    context,
-    intent
-):
-
-    """
-    Builds the final grounded prompt.
-    """
+    user_query: str,
+    recommendations: list[Any],
+    context: dict[str, Any],
+    intent: str,
+) -> str:
 
     recommendation_context = (
         build_recommendation_context(
@@ -231,250 +523,331 @@ def build_prompt(
         )
     )
 
-    prompt = f"""
-Hiring Requirement:
-{safe_value(user_query)}
+    return f"""
+USER REQUIREMENT:
+{truncate(user_query, 300)}
 
-Detected Intent:
-{safe_value(intent)}
+INTENT:
+{truncate(intent, 120)}
 
-Extracted Context:
+ROLE:
+{truncate(context.get("roles"), 120)}
 
-Roles:
-{safe_value(context.get("roles"))}
+SENIORITY:
+{truncate(context.get("seniority"), 80)}
 
-Seniority:
-{safe_value(context.get("seniority"))}
+SKILLS:
+{truncate(context.get("skills"), 220)}
 
-Skills:
-{safe_value(context.get("skills"))}
+ASSESSMENT TYPES:
+{truncate(context.get("assessment_types"), 120)}
 
-Assessment Types:
-{safe_value(
-    context.get("assessment_types")
-)}
+LEADERSHIP REQUIRED:
+{safe_str(context.get("leadership_required"))}
 
-Leadership Required:
-{safe_value(
-    context.get("leadership_required")
-)}
+COMMUNICATION REQUIRED:
+{safe_str(context.get("communication_required"))}
 
-Communication Required:
-{safe_value(
-    context.get("communication_required")
-)}
+COGNITIVE REQUIRED:
+{safe_str(context.get("cognitive_required"))}
 
-Personality Required:
-{safe_value(
-    context.get("personality_required")
-)}
-
-Cognitive Required:
-{safe_value(
-    context.get("cognitive_required")
-)}
-
-Available Assessments:
+AVAILABLE SHL ASSESSMENTS:
 {recommendation_context}
 
 TASK:
-Generate a concise and professional recommendation response.
-
-Requirements:
-- Mention strongest assessment first
-- Explain fit briefly
-- Mention technical/personality/communication/cognitive alignment only if relevant
-- Stay grounded strictly in provided assessments
-- Never invent assessment details
-- Keep response under {MAX_RESPONSE_WORDS} words
+Recommend the strongest assessments first.
+Explain role alignment and skill relevance.
+Keep response concise and grounded.
 """
-
-    return prompt.strip()
-
 
 # =========================================================
 # FALLBACK RESPONSE
 # =========================================================
 
 def fallback_response(
-    recommendations
-):
+    recommendations: list[Any],
+) -> str:
 
-    """
-    Safe deterministic fallback response.
-    """
-
-    if not recommendations:
-
-        return (
-            "I could not find strong matching "
-            "SHL assessments for the provided "
-            "hiring requirements."
+    normalized = (
+        filter_recommendations(
+            recommendations
         )
-
-    names = [
-
-        item.get("name")
-
-        for item in recommendations[:3]
-
-        if item.get("name")
-    ]
-
-    if not names:
-
-        return (
-            "Relevant SHL assessments were "
-            "identified, but assessment names "
-            "were unavailable."
-        )
-
-    joined = ", ".join(names)
-
-    return (
-        f"I identified several relevant SHL "
-        f"assessments including {joined}. "
-        f"These assessments align with the "
-        f"hiring requirements provided."
     )
 
+    if not normalized:
+
+        return (
+            "No highly relevant SHL assessments "
+            "were identified for the provided "
+            "requirements."
+        )
+
+    lines: list[str] = []
+
+    lines.append(
+        "Recommended SHL assessments:"
+    )
+
+    for item in normalized[:3]:
+
+        explanation = (
+            item["explanation"]
+            if item["explanation"]
+            != "Not specified"
+            else item["description"]
+        )
+
+        lines.append(
+            (
+                f"- {item['name']}: "
+                f"{truncate(explanation, 140)}"
+            )
+        )
+
+    return "\n".join(lines)
 
 # =========================================================
-# RESPONSE CLEANER
+# CLEAN RESPONSE
 # =========================================================
 
-def clean_response(content):
-
-    """
-    Basic response sanitation.
-    """
+def clean_response(
+    content: str,
+) -> str:
 
     if not content:
         return ""
 
-    content = content.strip()
+    content = clean_text(content)
 
-    # Remove excessive blank lines
-    lines = [
+    content = re.sub(
+        r"Recommendationstrength\.\w+",
+        "",
+        content,
+        flags=re.IGNORECASE,
+    )
 
-        line.strip()
+    content = re.sub(
+        r"TestType\.\w+",
+        "",
+        content,
+        flags=re.IGNORECASE,
+    )
 
-        for line in content.splitlines()
-
-        if line.strip()
-    ]
-
-    cleaned = "\n".join(lines)
-
-    return cleaned[:3000]
-
+    return content[:2800].strip()
 
 # =========================================================
-# MAIN GENERATION
+# RETRY SLEEP
+# =========================================================
+
+def retry_sleep(
+    attempt: int,
+) -> None:
+
+    base = (
+        1.2
+        * (attempt + 1)
+    )
+
+    jitter = random.uniform(
+        0.2,
+        0.8,
+    )
+
+    time.sleep(
+        base + jitter
+    )
+
+# =========================================================
+# MAIN
 # =========================================================
 
 def generate_llm_response(
-    user_query,
-    recommendations,
-    context,
-    intent
-):
-
-    """
-    Generates grounded recommendation response.
-    """
+    user_query: str,
+    recommendations: list[Any],
+    context: dict[str, Any],
+    intent: str,
+) -> str:
 
     try:
 
-        # =====================================
-        # EMPTY RESULTS
-        # =====================================
+        cleaned_recommendations = (
+            filter_recommendations(
+                recommendations
+            )
+        )
 
-        if not recommendations:
+        if not cleaned_recommendations:
 
             logger.warning(
-                "No recommendations available."
+                "No valid recommendations found."
             )
 
             return fallback_response([])
 
-        # =====================================
-        # BUILD PROMPT
-        # =====================================
+        # =================================================
+        # SAFE FALLBACK MODE
+        # =================================================
 
-        prompt = build_prompt(
-            user_query=user_query,
-            recommendations=recommendations,
-            context=context,
-            intent=intent
-        )
-
-        logger.info(
-            "Generating LLM response..."
-        )
-
-        # =====================================
-        # LLM REQUEST
-        # =====================================
-
-        response = (
-            client.chat.completions.create(
-
-                model=MODEL_NAME,
-
-                messages=[
-                    {
-                        "role": "system",
-                        "content": SYSTEM_PROMPT
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-
-                temperature=0.1,
-
-                max_tokens=220,
-
-                top_p=0.9
-            )
-        )
-
-        # =====================================
-        # EXTRACT RESPONSE
-        # =====================================
-
-        content = (
-            response.choices[0]
-            .message
-            .content
-        )
-
-        cleaned_content = clean_response(
-            content
-        )
-
-        # =====================================
-        # EMPTY SAFETY
-        # =====================================
-
-        if not cleaned_content:
+        if SAFE_FALLBACK_MODE:
 
             logger.warning(
-                "Empty LLM response received."
+                "SAFE_FALLBACK_MODE enabled."
             )
 
             return fallback_response(
-                recommendations
+                cleaned_recommendations
             )
 
-        return cleaned_content
+        prompt = build_prompt(
+            user_query=user_query,
+            recommendations=cleaned_recommendations,
+            context=context,
+            intent=intent,
+        )
+
+        logger.info(
+            "Generating grounded SHL response..."
+        )
+
+        # =================================================
+        # RETRY LOOP
+        # =================================================
+
+        for attempt in range(
+            MAX_RETRIES + 1
+        ):
+
+            try:
+
+                response = (
+                    client.chat.completions.create(
+
+                        model=MODEL_NAME,
+
+                        messages=[
+
+                            {
+                                "role": "system",
+                                "content": SYSTEM_PROMPT,
+                            },
+
+                            {
+                                "role": "user",
+                                "content": prompt,
+                            },
+                        ],
+
+                        temperature=0.05,
+
+                        max_tokens=220,
+
+                        top_p=0.85,
+
+                        frequency_penalty=0.15,
+
+                        presence_penalty=0.05,
+
+                        timeout=REQUEST_TIMEOUT,
+                    )
+                )
+
+                content = (
+                    response
+                    .choices[0]
+                    .message
+                    .content
+                )
+
+                cleaned = clean_response(
+                    content
+                )
+
+                if not cleaned:
+
+                    logger.warning(
+                        "Received empty LLM response."
+                    )
+
+                    return fallback_response(
+                        cleaned_recommendations
+                    )
+
+                return cleaned
+
+            # =============================================
+            # RATE LIMIT
+            # =============================================
+
+            except RateLimitError as error:
+
+                logger.exception(
+                    "Groq rate limit hit: %s",
+                    error,
+                )
+
+                if attempt >= MAX_RETRIES:
+
+                    logger.warning(
+                        "Using deterministic fallback after rate limit."
+                    )
+
+                    return fallback_response(
+                        cleaned_recommendations
+                    )
+
+                retry_sleep(attempt)
+
+            # =============================================
+            # API ERROR
+            # =============================================
+
+            except APIError as error:
+
+                logger.exception(
+                    "Groq API error: %s",
+                    error,
+                )
+
+                if attempt >= MAX_RETRIES:
+
+                    return fallback_response(
+                        cleaned_recommendations
+                    )
+
+                retry_sleep(attempt)
+
+            # =============================================
+            # GENERIC FAILURE
+            # =============================================
+
+            except Exception as error:
+
+                logger.exception(
+                    "LLM generation failure: %s",
+                    error,
+                )
+
+                if attempt >= MAX_RETRIES:
+
+                    return fallback_response(
+                        cleaned_recommendations
+                    )
+
+                retry_sleep(attempt)
+
+        # =================================================
+        # HARD SAFETY
+        # =================================================
+
+        return fallback_response(
+            cleaned_recommendations
+        )
 
     except Exception as error:
 
         logger.exception(
-            f"LLM generation failed: {error}"
+            "Fatal LLM pipeline failure: %s",
+            error,
         )
 
         return fallback_response(

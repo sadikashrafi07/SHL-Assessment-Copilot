@@ -8,7 +8,15 @@ from __future__ import annotations
 
 import logging
 import re
+
+from functools import lru_cache
+
 from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Pattern
+from typing import Set
 
 from app.utils.helpers import normalize
 
@@ -18,7 +26,7 @@ logger = logging.getLogger(__name__)
 # CONSTANTS
 # =========================================================
 
-COMPARISON_WORDS = {
+COMPARISON_WORDS: Set[str] = {
     "compare",
     "comparison",
     "difference",
@@ -26,9 +34,11 @@ COMPARISON_WORDS = {
     "vs",
     "better than",
     "alternative",
+    "alternative to",
+    "which is better",
 }
 
-REFINEMENT_WORDS = {
+REFINEMENT_WORDS: Set[str] = {
     "actually",
     "instead",
     "update",
@@ -36,9 +46,11 @@ REFINEMENT_WORDS = {
     "change",
     "replace",
     "refine",
+    "narrow",
+    "filter",
 }
 
-END_WORDS = {
+END_WORDS: Set[str] = {
     "thanks",
     "thank you",
     "bye",
@@ -46,13 +58,14 @@ END_WORDS = {
     "goodbye",
     "perfect",
     "great",
+    "resolved",
 }
 
 # =========================================================
 # GREETING WORDS
 # =========================================================
 
-GREETING_WORDS = {
+GREETING_WORDS: Set[str] = {
     "hi",
     "hello",
     "hey",
@@ -67,19 +80,20 @@ GREETING_WORDS = {
 # HELP WORDS
 # =========================================================
 
-HELP_WORDS = {
+HELP_WORDS: Set[str] = {
     "help",
     "what can you do",
     "how can you help",
     "features",
     "capabilities",
+    "assist",
 }
 
 # =========================================================
 # STRONG OFFTOPIC FILTERS
 # =========================================================
 
-OFFTOPIC_WORDS = {
+OFFTOPIC_WORDS: Set[str] = {
 
     # Finance
     "salary",
@@ -129,40 +143,29 @@ OFFTOPIC_WORDS = {
 # DOMAIN KEYWORDS
 # =========================================================
 
-DOMAIN_KEYWORDS = {
+DOMAIN_KEYWORDS: Set[str] = {
 
-    # =====================================================
     # Hiring
-    # =====================================================
-
     "assessment",
     "assessment test",
     "assessment recommendation",
     "assessment recommendations",
-
     "test",
     "testing",
-
     "hiring",
     "recruitment",
     "recruiting",
-
     "candidate",
     "candidate screening",
     "screening",
-
     "interview",
     "evaluation",
     "hiring evaluation",
-
     "job",
     "role",
     "position",
 
-    # =====================================================
     # Assessment Types
-    # =====================================================
-
     "technical assessment",
     "coding assessment",
     "personality assessment",
@@ -170,10 +173,7 @@ DOMAIN_KEYWORDS = {
     "cognitive assessment",
     "aptitude test",
 
-    # =====================================================
     # Roles
-    # =====================================================
-
     "developer",
     "engineer",
     "manager",
@@ -181,10 +181,7 @@ DOMAIN_KEYWORDS = {
     "analyst",
     "designer",
 
-    # =====================================================
     # Skills
-    # =====================================================
-
     "python",
     "java",
     "sql",
@@ -201,7 +198,7 @@ DOMAIN_KEYWORDS = {
 # ROLE TAXONOMY
 # =========================================================
 
-ROLE_PATTERNS = sorted(
+ROLE_PATTERNS: List[str] = sorted(
     [
         # Product
         "senior product manager",
@@ -265,7 +262,7 @@ ROLE_PATTERNS = sorted(
 # SENIORITY
 # =========================================================
 
-SENIORITY_PATTERNS = [
+SENIORITY_PATTERNS: List[str] = [
     "principal",
     "staff",
     "lead",
@@ -280,7 +277,7 @@ SENIORITY_PATTERNS = [
 # ASSESSMENT TYPES
 # =========================================================
 
-ASSESSMENT_TYPES = [
+ASSESSMENT_TYPES: List[str] = [
     "technical",
     "personality",
     "behavioral",
@@ -297,7 +294,7 @@ ASSESSMENT_TYPES = [
 # SKILLS
 # =========================================================
 
-SKILL_PATTERNS = sorted(
+SKILL_PATTERNS: List[str] = sorted(
     [
         # Languages
         "python",
@@ -382,13 +379,16 @@ SKILL_PATTERNS = sorted(
 # REGEX HELPERS
 # =========================================================
 
-def build_pattern(term: str) -> re.Pattern:
+@lru_cache(maxsize=4096)
+def build_pattern(term: str) -> Pattern[str]:
     """
-    Safe whole-word regex pattern.
+    Cached safe whole-word regex pattern.
     """
 
+    normalized_term = normalize(term)
+
     return re.compile(
-        rf"\b{re.escape(normalize(term))}\b",
+        rf"\b{re.escape(normalized_term)}\b",
         flags=re.IGNORECASE,
     )
 
@@ -404,8 +404,12 @@ def regex_match(
     if not term or not text:
         return False
 
+    normalized_text = normalize_text(text)
+
     return bool(
-        build_pattern(term).search(text)
+        build_pattern(term).search(
+            normalized_text
+        )
     )
 
 # =========================================================
@@ -420,55 +424,61 @@ def normalize_text(text: Any) -> str:
     if text is None:
         return ""
 
-    text = str(text)
+    normalized = normalize(str(text))
 
-    text = normalize(text)
-
-    text = re.sub(
+    normalized = re.sub(
         r"\s+",
         " ",
-        text,
+        normalized,
     )
 
-    return text.strip()
+    return normalized.strip()
 
 # =========================================================
 # EXTRACTION HELPERS
 # =========================================================
 
 def deduplicate(
-    items: list[str],
-) -> list[str]:
+    items: List[str],
+) -> List[str]:
     """
     Deterministic deduplication.
     """
 
-    cleaned: list[str] = []
+    seen: Set[str] = set()
+
+    result: List[str] = []
 
     for item in items:
 
         value = normalize_text(item)
 
-        if value and value not in cleaned:
-            cleaned.append(value)
+        if value and value not in seen:
 
-    return cleaned
+            seen.add(value)
+
+            result.append(value)
+
+    return result
 
 
 def extract_roles(
     text: str,
-) -> list[str]:
+) -> List[str]:
     """
     Extract role mentions.
     """
 
-    text = normalize_text(text)
+    normalized_text = normalize_text(text)
 
-    found: list[str] = []
+    found: List[str] = []
 
     for role in ROLE_PATTERNS:
 
-        if regex_match(role, text):
+        if regex_match(
+            role,
+            normalized_text,
+        ):
             found.append(role)
 
     return deduplicate(found)
@@ -476,16 +486,19 @@ def extract_roles(
 
 def extract_seniority(
     text: str,
-) -> str | None:
+) -> Optional[str]:
     """
     Extract seniority level.
     """
 
-    text = normalize_text(text)
+    normalized_text = normalize_text(text)
 
     for level in SENIORITY_PATTERNS:
 
-        if regex_match(level, text):
+        if regex_match(
+            level,
+            normalized_text,
+        ):
             return level
 
     return None
@@ -493,40 +506,45 @@ def extract_seniority(
 
 def extract_assessment_types(
     text: str,
-) -> list[str]:
+) -> List[str]:
     """
     Extract assessment types.
     """
 
-    text = normalize_text(text)
+    normalized_text = normalize_text(text)
 
-    found: list[str] = []
+    found: List[str] = []
 
     for assessment_type in ASSESSMENT_TYPES:
 
         if regex_match(
             assessment_type,
-            text,
+            normalized_text,
         ):
-            found.append(assessment_type)
+            found.append(
+                assessment_type
+            )
 
     return deduplicate(found)
 
 
 def extract_skills(
     text: str,
-) -> list[str]:
+) -> List[str]:
     """
     Extract technical + professional skills.
     """
 
-    text = normalize_text(text)
+    normalized_text = normalize_text(text)
 
-    found: list[str] = []
+    found: List[str] = []
 
     for skill in SKILL_PATTERNS:
 
-        if regex_match(skill, text):
+        if regex_match(
+            skill,
+            normalized_text,
+        ):
             found.append(skill)
 
     return deduplicate(found)
@@ -543,51 +561,51 @@ def is_relevant_query(
     SHL assessment recommendation domain.
     """
 
-    text = normalize_text(text)
+    normalized_text = normalize_text(text)
 
-    if not text:
+    if not normalized_text:
         return False
 
-    # =====================================================
-    # GREETINGS + HELP ARE ALLOWED
-    # =====================================================
-
+    # Greetings allowed
     if any(
-        regex_match(word, text)
+        regex_match(word, normalized_text)
         for word in GREETING_WORDS
     ):
         return True
 
+    # Help allowed
     if any(
-        regex_match(word, text)
+        regex_match(word, normalized_text)
         for word in HELP_WORDS
     ):
         return True
 
-    # =====================================================
-    # HARDCODED OFFTOPIC FILTER
-    # =====================================================
-
-    if any(
-        regex_match(word, text)
+    # Strong offtopic detection
+    offtopic_hits = sum(
+        1
         for word in OFFTOPIC_WORDS
-    ):
+        if regex_match(word, normalized_text)
+    )
+
+    if offtopic_hits >= 2:
         return False
 
-    # =====================================================
-    # DOMAIN SIGNALS
-    # =====================================================
+    role_matches = extract_roles(
+        normalized_text
+    )
 
-    role_matches = extract_roles(text)
-
-    skill_matches = extract_skills(text)
+    skill_matches = extract_skills(
+        normalized_text
+    )
 
     assessment_matches = (
-        extract_assessment_types(text)
+        extract_assessment_types(
+            normalized_text
+        )
     )
 
     keyword_matches = any(
-        regex_match(word, text)
+        regex_match(word, normalized_text)
         for word in DOMAIN_KEYWORDS
     )
 
@@ -603,7 +621,7 @@ def is_relevant_query(
 # =========================================================
 
 def get_latest_user_message(
-    messages: list[Any],
+    messages: List[Any],
 ) -> str:
     """
     Get latest user message safely.
@@ -629,20 +647,20 @@ def get_latest_user_message(
             else str(role)
         )
 
-        if role_value == "user":
+        if normalize_text(role_value) == "user":
             return str(content or "")
 
     return ""
 
 
 def build_conversation_text(
-    messages: list[Any],
+    messages: List[Any],
 ) -> str:
     """
     Build normalized conversation text.
     """
 
-    parts: list[str] = []
+    parts: List[str] = []
 
     for msg in messages:
 
@@ -664,50 +682,40 @@ def build_conversation_text(
 # =========================================================
 
 def detect_intent(
-    messages: list[Any],
+    messages: List[Any],
 ) -> str:
     """
     Detect conversational intent safely.
     """
 
     latest = normalize_text(
-        get_latest_user_message(messages)
+        get_latest_user_message(
+            messages
+        )
     )
 
     if not latest:
         return "recommendation"
 
-    # =====================================================
-    # GREETING
-    # =====================================================
-
+    # Greeting
     if any(
         regex_match(word, latest)
         for word in GREETING_WORDS
     ):
         return "greeting"
 
-    # =====================================================
-    # HELP
-    # =====================================================
-
+    # Help
     if any(
         regex_match(word, latest)
         for word in HELP_WORDS
     ):
         return "help"
 
-    # =====================================================
-    # DOMAIN VALIDATION
-    # =====================================================
-
+    # Offtopic
     if not is_relevant_query(latest):
         return "offtopic"
 
-    # =====================================================
-    # COMPARISON
-    # =====================================================
-
+    # Comparison
     if (
         " vs " in latest
         or any(
@@ -717,10 +725,7 @@ def detect_intent(
     ):
         return "comparison"
 
-    # =====================================================
-    # REFINEMENT
-    # =====================================================
-
+    # Refinement
     if any(
         latest.startswith(word)
         for word in REFINEMENT_WORDS
@@ -735,45 +740,52 @@ def detect_intent(
 
 def extract_duration_constraint(
     text: str,
-) -> int | None:
+) -> Optional[int]:
     """
     Extract duration limits.
     """
 
-    text = normalize_text(text)
+    normalized_text = normalize_text(text)
 
     patterns = [
-        r"under (\d+)\s*(mins|minutes)",
-        r"less than (\d+)\s*(mins|minutes)",
-        r"within (\d+)\s*(mins|minutes)",
-        r"(\d+)\s*(mins|minutes) max",
+        r"under\s+(\d+)\s*(mins|minutes)",
+        r"less than\s+(\d+)\s*(mins|minutes)",
+        r"within\s+(\d+)\s*(mins|minutes)",
+        r"(\d+)\s*(mins|minutes)\s*max",
+        r"max\s*(\d+)\s*(mins|minutes)",
     ]
 
     for pattern in patterns:
 
         match = re.search(
             pattern,
-            text,
+            normalized_text,
         )
 
         if match:
-            return int(match.group(1))
+            try:
+                return int(match.group(1))
+            except (
+                TypeError,
+                ValueError,
+            ):
+                continue
 
     return None
 
 
 def extract_experience(
     text: str,
-) -> str | None:
+) -> Optional[str]:
     """
     Extract years of experience.
     """
 
-    text = normalize_text(text)
+    normalized_text = normalize_text(text)
 
     match = re.search(
         r"(\d+)\+?\s*(years|yrs|year)",
-        text,
+        normalized_text,
     )
 
     if match:
@@ -784,34 +796,34 @@ def extract_experience(
 
 def extract_comparison_targets(
     text: str,
-) -> list[str]:
+) -> List[str]:
     """
     Extract comparison targets.
     """
 
-    text = normalize_text(text)
+    normalized_text = normalize_text(text)
 
-    if " vs " in text:
+    if " vs " in normalized_text:
 
         return deduplicate(
             [
-                x.strip()
-                for x in text.split(" vs ")
-                if x.strip()
+                item.strip()
+                for item in normalized_text.split(" vs ")
+                if item.strip()
             ]
         )[:2]
 
     match = re.search(
-        r"compare (.+?) and (.+)",
-        text,
+        r"compare\s+(.+?)\s+and\s+(.+)",
+        normalized_text,
     )
 
     if match:
 
         return deduplicate(
             [
-                match.group(1).strip(),
-                match.group(2).strip(),
+                match.group(1),
+                match.group(2),
             ]
         )[:2]
 
@@ -822,8 +834,8 @@ def extract_comparison_targets(
 # =========================================================
 
 def extract_context(
-    messages: list[Any],
-) -> dict[str, Any]:
+    messages: List[Any],
+) -> Dict[str, Any]:
     """
     Extract structured conversation context.
     """
@@ -833,23 +845,22 @@ def extract_context(
     )
 
     latest_message = normalize_text(
-        get_latest_user_message(messages)
+        get_latest_user_message(
+            messages
+        )
     )
 
     intent = detect_intent(messages)
 
     roles = extract_roles(text)
 
-    if (
-        not roles
-        and regex_match(
-            "data scientist",
-            text,
-        )
-    ):
-        roles.append("data scientist")
-
     skills = extract_skills(text)
+
+    assessment_types = (
+        extract_assessment_types(
+            text
+        )
+    )
 
     leadership_required = any(
         regex_match(term, text)
@@ -892,7 +903,7 @@ def extract_context(
         ]
     )
 
-    context = {
+    context: Dict[str, Any] = {
 
         "roles":
             deduplicate(roles),
@@ -901,13 +912,17 @@ def extract_context(
             extract_seniority(text),
 
         "skills":
-            skills,
+            deduplicate(skills),
 
         "assessment_types":
-            extract_assessment_types(text),
+            deduplicate(
+                assessment_types
+            ),
 
         "duration_limit":
-            extract_duration_constraint(text),
+            extract_duration_constraint(
+                text
+            ),
 
         "experience":
             extract_experience(text),
@@ -966,14 +981,18 @@ def extract_context(
 # =========================================================
 
 def should_ask_clarification(
-    context: dict[str, Any],
-    messages: list[Any],
-) -> dict[str, Any]:
+    context: Dict[str, Any],
+    messages: List[Any],
+) -> Dict[str, Any]:
     """
     Determine whether clarification is needed.
     """
 
-    if context.get("intent") in {
+    intent = context.get(
+        "intent"
+    )
+
+    if intent in {
         "offtopic",
         "greeting",
         "help",
@@ -982,18 +1001,29 @@ def should_ask_clarification(
         return {
             "needed": False,
             "missing_fields": [],
-            "offtopic": False,
+            "offtopic":
+                intent == "offtopic",
         }
 
     has_signal = any(
         [
             context.get("roles"),
             context.get("skills"),
-            context.get("assessment_types"),
-            context.get("leadership_required"),
-            context.get("communication_required"),
-            context.get("cognitive_required"),
-            context.get("personality_required"),
+            context.get(
+                "assessment_types"
+            ),
+            context.get(
+                "leadership_required"
+            ),
+            context.get(
+                "communication_required"
+            ),
+            context.get(
+                "cognitive_required"
+            ),
+            context.get(
+                "personality_required"
+            ),
         ]
     )
 
@@ -1024,7 +1054,7 @@ def should_ask_clarification(
 
 
 def generate_clarification_question(
-    missing_fields: list[str],
+    missing_fields: List[str],
     offtopic: bool = False,
 ) -> str:
     """
@@ -1039,11 +1069,18 @@ def generate_clarification_question(
             "skills, or competency evaluation."
         )
 
+    if "role" in missing_fields:
+
+        return (
+            "Could you share the target role, "
+            "seniority level, and key technical "
+            "or professional skills you want "
+            "to evaluate?"
+        )
+
     return (
-        "Could you share the target role, "
-        "seniority level, and key technical "
-        "or professional skills you want "
-        "to evaluate?"
+        "Please provide additional hiring "
+        "requirements or assessment preferences."
     )
 
 # =========================================================
@@ -1051,7 +1088,7 @@ def generate_clarification_question(
 # =========================================================
 
 def build_search_query(
-    context: dict[str, Any],
+    context: Dict[str, Any],
 ) -> str:
     """
     Build optimized retrieval query.
@@ -1064,17 +1101,18 @@ def build_search_query(
     }:
         return ""
 
-    parts: list[str] = []
+    parts: List[str] = []
 
     parts.extend(
         context.get("roles", [])
     )
 
-    if context.get("seniority"):
+    seniority = context.get(
+        "seniority"
+    )
 
-        parts.append(
-            context["seniority"]
-        )
+    if seniority:
+        parts.append(seniority)
 
     parts.extend(
         context.get("skills", [])
@@ -1117,17 +1155,20 @@ def build_search_query(
     ):
         parts.append("remote")
 
-    if context.get("experience"):
-
-        parts.append(
-            f"{context['experience']} years"
-        )
-
-    query = " ".join(
-        deduplicate(parts)
+    experience = context.get(
+        "experience"
     )
 
-    query = normalize_text(query)
+    if experience:
+        parts.append(
+            f"{experience} years"
+        )
+
+    query = normalize_text(
+        " ".join(
+            deduplicate(parts)
+        )
+    )
 
     logger.info(
         "Final search query: %s",
@@ -1141,15 +1182,17 @@ def build_search_query(
 # =========================================================
 
 def detect_conversation_end(
-    messages: list[Any],
-    recommendations: list[Any],
+    messages: List[Any],
+    recommendations: List[Any],
 ) -> bool:
     """
     Detect whether conversation should end.
     """
 
     latest = normalize_text(
-        get_latest_user_message(messages)
+        get_latest_user_message(
+            messages
+        )
     )
 
     return bool(
@@ -1157,5 +1200,36 @@ def detect_conversation_end(
         and any(
             regex_match(word, latest)
             for word in END_WORDS
+        )
+    )
+
+# =========================================================
+# DEBUG
+# =========================================================
+
+if __name__ == "__main__":
+
+    sample_messages = [
+        {
+            "role": "user",
+            "content": (
+                "Need assessment for senior "
+                "backend python developer "
+                "with leadership and "
+                "communication skills "
+                "under 45 minutes"
+            ),
+        }
+    ]
+
+    extracted = extract_context(
+        sample_messages
+    )
+
+    print(extracted)
+
+    print(
+        build_search_query(
+            extracted
         )
     )

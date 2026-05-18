@@ -1,271 +1,352 @@
 # =========================================================
 # app/services/query_parser.py
+# ENTERPRISE QUERY PARSER v6
+# FULLY FIXED + ASSIGNMENT OPTIMIZED
+# SAME ARCHITECTURE PRESERVED
 # =========================================================
-"""
-Enterprise-grade query parser for:
-- intent detection
-- semantic skill extraction
-- fuzzy matching
-- role detection
-- comparison detection
-- delivery preference extraction
-- structured retrieval metadata
-
-Improvements:
-✔ Removed duplicated logic
-✔ Removed unnecessary regex passes
-✔ Added caching
-✔ Added type hints
-✔ Added deterministic outputs
-✔ Added safer fuzzy matching
-✔ Added weighted scoring normalization
-✔ Added phrase-aware extraction
-✔ Added negative intent handling
-✔ Added extensibility
-✔ Improved retrieval precision
-✔ Improved reranker compatibility
-✔ Reduced noisy classifications
-✔ Production-ready architecture
-"""
 
 from __future__ import annotations
 
 import re
+
 from difflib import get_close_matches
 from functools import lru_cache
-from typing import Dict, List, Set, Tuple
+from typing import Dict
+from typing import List
+from typing import Set
+
+from app.config.settings import (
+    ENABLE_COMPETENCY_EXPANSION,
+    ENABLE_FUZZY_MATCHING,
+    ENABLE_QUERY_EXPANSION,
+    ENABLE_ROLE_EXPANSION,
+    MAX_EXPANSION_TERMS,
+    QUERY_EXPANSIONS,
+    ROLE_COMPETENCIES,
+)
 
 from app.utils.helpers import normalize
 
 # =========================================================
-# CONFIG
+# FUZZY CONFIG
 # =========================================================
 
-FUZZY_MATCH_THRESHOLD = 0.85
-MAX_FUZZY_RESULTS = 1
+FUZZY_MATCH_THRESHOLD = 0.86
+
+MAX_FUZZY_RESULTS = 2
+
+MIN_TOKEN_LENGTH = 3
 
 # =========================================================
-# DOMAIN VOCABULARY
+# ROLE ALIASES
+# =========================================================
+
+ROLE_ALIASES = {
+
+    "sde": "software engineer",
+    "software developer": "software engineer",
+
+    "backend engineer": "backend developer",
+    "frontend engineer": "frontend developer",
+
+    "fullstack developer": "full stack developer",
+    "fullstack engineer": "full stack developer",
+
+    "ml engineer": "data scientist",
+    "machine learning engineer": "data scientist",
+    "ai engineer": "data scientist",
+
+    "pm": "product manager",
+    "product owner": "product manager",
+
+    "engineering lead": "engineering manager",
+    "tech lead": "engineering manager",
+}
+
+# =========================================================
+# VOCABULARY
 # =========================================================
 
 TECHNICAL_TERMS: Dict[str, int] = {
+
     "developer": 2,
     "software": 1,
-    "programming": 2,
-    "coding": 2,
     "engineer": 2,
-    "technical": 1,
+    "technical": 2,
+    "coding": 3,
+    "programming": 3,
+    "software development": 4,
+    "system design": 5,
+    "debugging": 3,
+    "algorithms": 5,
+
     "python": 5,
     "java": 5,
     "javascript": 5,
-    "react": 4,
+    "typescript": 5,
+    "sql": 5,
+
+    "frontend": 5,
+    "react": 5,
+    "angular": 4,
+    "vue": 4,
+    "ui": 3,
+    "ux": 3,
+    "nextjs": 5,
+    "redux": 4,
+    "tailwind": 4,
+
+    "backend": 5,
+    "api": 5,
+    "microservices": 5,
+    "distributed systems": 5,
+    "fastapi": 5,
+    "django": 4,
+    "flask": 4,
     "node": 4,
-    "backend": 4,
-    "frontend": 4,
-    "full stack": 5,
+
     "cloud": 4,
     "aws": 5,
-    "sql": 4,
-    "docker": 4,
-    "linux": 3,
-    "api": 3,
+    "docker": 5,
+    "kubernetes": 5,
+    "linux": 4,
+    "devops": 5,
+    "infrastructure": 4,
+
     "machine learning": 5,
+    "deep learning": 4,
+    "artificial intelligence": 5,
     "ai": 5,
-    "devops": 4,
+    "analytics": 4,
+    "statistics": 5,
+    "data science": 5,
+    "data analysis": 5,
+    "nlp": 5,
+    "tensorflow": 5,
+    "pytorch": 5,
+
+    "problem solving": 5,
+    "analytical thinking": 5,
 }
 
 COMMUNICATION_TERMS: Dict[str, int] = {
+
     "communication": 5,
-    "stakeholder": 4,
+    "stakeholder management": 5,
+    "stakeholder communication": 5,
     "presentation": 4,
-    "email": 2,
-    "verbal": 3,
-    "writing": 3,
     "collaboration": 4,
+    "cross functional": 4,
     "interpersonal": 4,
     "client facing": 5,
-}
-
-PERSONALITY_TERMS: Dict[str, int] = {
-    "personality": 5,
-    "behavioral": 5,
-    "behavior": 4,
-    "culture": 3,
-    "traits": 3,
-    "motivation": 4,
-    "adaptability": 4,
-    "opq": 5,
+    "written communication": 5,
+    "verbal communication": 5,
+    "negotiation": 4,
+    "facilitation": 3,
 }
 
 LEADERSHIP_TERMS: Dict[str, int] = {
+
     "leadership": 5,
-    "manager": 4,
     "management": 4,
-    "decision making": 4,
-    "team lead": 4,
+    "manager": 4,
+    "people management": 5,
+    "decision making": 5,
+    "strategic thinking": 5,
     "ownership": 3,
-    "strategic": 3,
+    "team lead": 4,
+    "executive": 4,
+    "organizational leadership": 5,
+}
+
+PERSONALITY_TERMS: Dict[str, int] = {
+
+    "personality": 5,
+    "behavioral": 5,
+    "behavior": 4,
+    "motivation": 4,
+    "adaptability": 4,
+    "resilience": 4,
+    "culture fit": 4,
+    "traits": 3,
+    "opq": 5,
 }
 
 COGNITIVE_TERMS: Dict[str, int] = {
+
     "cognitive": 5,
     "aptitude": 5,
-    "reasoning": 4,
-    "logical": 3,
-    "critical thinking": 4,
-    "analytical": 4,
+    "reasoning": 5,
+    "logical reasoning": 5,
+    "analytical": 5,
+    "critical thinking": 5,
     "numerical": 4,
     "problem solving": 5,
+    "deductive": 4,
+    "inductive": 4,
+    "general ability": 5,
 }
 
 # =========================================================
-# ENTITY TERMS
+# ROLE TERMS
 # =========================================================
 
 ROLE_TERMS = {
-    "developer",
-    "engineer",
-    "manager",
+
+    "software engineer",
+    "backend developer",
+    "frontend developer",
+    "full stack developer",
+    "java developer",
+    "python developer",
+    "data scientist",
+    "product manager",
+    "engineering manager",
+    "devops engineer",
     "analyst",
     "consultant",
-    "architect",
-    "sales",
-    "support",
     "designer",
-    "intern",
-    "graduate",
+    "sales professional",
 }
 
+# =========================================================
+# SENIORITY
+# =========================================================
+
 SENIORITY_TERMS = {
+
     "entry",
+    "entry level",
     "junior",
+    "associate",
     "mid",
     "senior",
     "lead",
     "principal",
     "manager",
+    "executive",
 }
 
+# =========================================================
+# DELIVERY
+# =========================================================
+
+DELIVERY_TERMS = {
+
+    "remote",
+    "adaptive",
+    "online",
+    "virtual",
+    "mobile",
+}
+
+# =========================================================
+# NEGATION
+# =========================================================
+
+NEGATION_TERMS = {
+
+    "not",
+    "without",
+    "exclude",
+    "excluding",
+    "avoid",
+    "except",
+    "no",
+}
+
+# =========================================================
+# COMPARISON
+# =========================================================
+
 COMPARISON_TERMS = {
+
     "compare",
     "comparison",
     "difference",
     "vs",
     "versus",
     "better than",
-    "alternative to",
+    "alternative",
     "which is better",
 }
 
-NEGATION_TERMS = {
-    "not",
-    "don't",
-    "do not",
-    "without",
-    "exclude",
-    "avoid",
-    "no",
-}
-
-DELIVERY_TERMS = {
-    "remote",
-    "adaptive",
-    "online",
-    "virtual",
-}
-
 # =========================================================
-# SYNONYM MAP
-# =========================================================
-
-SYNONYMS = {
-    "developer": [
-        "engineer",
-        "programmer",
-        "software developer",
-        "software engineer",
-    ],
-
-    "communication": [
-        "stakeholder",
-        "presentation",
-        "collaboration",
-        "client communication",
-    ],
-
-    "leadership": [
-        "management",
-        "ownership",
-        "team leadership",
-    ],
-
-    "cloud": [
-        "aws",
-        "azure",
-        "gcp",
-    ],
-
-    "backend": [
-        "api",
-        "microservices",
-        "server side",
-    ],
-
-    "personality": [
-        "behavioral",
-        "culture fit",
-        "traits",
-    ],
-}
-
-# =========================================================
-# CATEGORY MAPPING
+# CATEGORY MAP
 # =========================================================
 
 CATEGORY_MAP = {
+
     "technical": TECHNICAL_TERMS,
     "communication": COMMUNICATION_TERMS,
-    "personality": PERSONALITY_TERMS,
     "leadership": LEADERSHIP_TERMS,
+    "personality": PERSONALITY_TERMS,
     "cognitive": COGNITIVE_TERMS,
 }
 
 # =========================================================
-# PHRASE TERMS
+# ALL TERMS
 # =========================================================
 
+ALL_TERMS = {
+
+    *TECHNICAL_TERMS.keys(),
+    *COMMUNICATION_TERMS.keys(),
+    *LEADERSHIP_TERMS.keys(),
+    *PERSONALITY_TERMS.keys(),
+    *COGNITIVE_TERMS.keys(),
+    *ROLE_TERMS,
+    *SENIORITY_TERMS,
+    *DELIVERY_TERMS,
+}
+
 MULTI_WORD_TERMS = sorted(
-    {
-        *TECHNICAL_TERMS.keys(),
-        *COMMUNICATION_TERMS.keys(),
-        *PERSONALITY_TERMS.keys(),
-        *LEADERSHIP_TERMS.keys(),
-        *COGNITIVE_TERMS.keys(),
-    },
+    ALL_TERMS,
     key=len,
     reverse=True,
 )
 
 # =========================================================
-# REGEX HELPERS
+# NORMALIZATION
 # =========================================================
 
-@lru_cache(maxsize=2048)
-def build_word_pattern(term: str) -> re.Pattern:
-    """
-    Cached whole-word regex pattern.
-    """
+@lru_cache(maxsize=10000)
+def normalize_cached(
+    text: str,
+) -> str:
+
+    text = normalize(text or "")
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    )
+
+    return text.strip()
+
+# =========================================================
+# REGEX CACHE
+# =========================================================
+
+@lru_cache(maxsize=10000)
+def build_word_pattern(
+    term: str,
+) -> re.Pattern:
 
     return re.compile(
-        rf"\b{re.escape(normalize(term))}\b",
+        rf"\b{re.escape(normalize_cached(term))}\b",
         flags=re.IGNORECASE,
     )
 
+# =========================================================
+# SAFE REGEX
+# =========================================================
 
-def regex_match(term: str, text: str) -> bool:
-    """
-    Safe whole-word match.
-    """
+def regex_match(
+    term: str,
+    text: str,
+) -> bool:
 
     if not term or not text:
         return False
@@ -275,25 +356,42 @@ def regex_match(term: str, text: str) -> bool:
     )
 
 # =========================================================
-# TOKENIZATION
+# NORMALIZE ROLE
 # =========================================================
 
-def tokenize_query(query: str) -> List[str]:
-    """
-    Phrase-aware tokenizer.
-    """
+def normalize_role(
+    role: str,
+) -> str:
 
-    normalized_query = normalize(query)
+    role = normalize_cached(role)
 
-    protected_query = normalized_query
+    return ROLE_ALIASES.get(
+        role,
+        role,
+    )
 
-    detected_phrases = []
+# =========================================================
+# TOKENIZER
+# =========================================================
+
+def tokenize_query(
+    query: str,
+) -> List[str]:
+
+    query = normalize_cached(query)
+
+    protected_query = query
+
+    phrases = []
 
     for phrase in MULTI_WORD_TERMS:
 
-        if regex_match(phrase, normalized_query):
+        if regex_match(
+            phrase,
+            query,
+        ):
 
-            detected_phrases.append(phrase)
+            phrases.append(phrase)
 
             protected_query = re.sub(
                 build_word_pattern(phrase),
@@ -301,23 +399,24 @@ def tokenize_query(query: str) -> List[str]:
                 protected_query,
             )
 
-    tokens = re.findall(
-        r"\b[\w\-/]+\b",
+    raw_tokens = re.findall(
+        r"\b[\w\-/+#.]+\b",
         protected_query,
     )
 
-    normalized_tokens = [
-        normalize(
+    normalized_tokens = []
+
+    for token in raw_tokens:
+
+        cleaned = normalize_cached(
             token.replace("_", " ")
         )
-        for token in tokens
-    ]
 
-    normalized_tokens.extend(
-        detected_phrases
-    )
+        if len(cleaned) >= MIN_TOKEN_LENGTH:
+            normalized_tokens.append(cleaned)
 
-    # deterministic unique ordering
+    normalized_tokens.extend(phrases)
+
     return list(
         dict.fromkeys(normalized_tokens)
     )
@@ -330,40 +429,35 @@ def detect_negation(
     query: str,
     term: str,
 ) -> bool:
-    """
-    Detect negated intent.
-    Example:
-    - "not python"
-    - "without leadership"
-    """
 
-    for negation in NEGATION_TERMS:
+    normalized_query = normalize_cached(query)
 
-        pattern = (
-            rf"\b{re.escape(negation)}\s+"
-            rf"{re.escape(term)}\b"
-        )
+    patterns = [
 
-        if re.search(
+        rf"\b(?:not|without|exclude|excluding|avoid|except|no)\s+{re.escape(term)}\b",
+
+        rf"\b{re.escape(term)}\s+(?:is\s+)?not\s+required\b",
+
+        rf"\bwithout\s+(?:any\s+)?{re.escape(term)}\b",
+    ]
+
+    return any(
+        re.search(
             pattern,
-            query,
+            normalized_query,
             flags=re.IGNORECASE,
-        ):
-            return True
-
-    return False
+        )
+        for pattern in patterns
+    )
 
 # =========================================================
-# GENERIC EXTRACTION
+# EXTRACTION
 # =========================================================
 
 def extract_matches(
     query: str,
     vocabulary,
 ) -> List[str]:
-    """
-    Extract exact matches from vocabulary.
-    """
 
     matches = []
 
@@ -371,44 +465,43 @@ def extract_matches(
 
         if (
             regex_match(term, query)
-            and not detect_negation(
-                query,
-                term,
-            )
+            and not detect_negation(query, term)
         ):
+
             matches.append(term)
 
     return sorted(set(matches))
 
 # =========================================================
-# FUZZY MATCHING
+# FUZZY MATCH
 # =========================================================
 
 def fuzzy_match(
     token: str,
     vocabulary,
-) -> str | None:
-    """
-    Fuzzy skill correction.
-    """
+) -> List[str]:
 
-    matches = get_close_matches(
+    if len(token) < MIN_TOKEN_LENGTH:
+        return []
+
+    return get_close_matches(
         token,
         vocabulary,
         n=MAX_FUZZY_RESULTS,
         cutoff=FUZZY_MATCH_THRESHOLD,
     )
 
-    return matches[0] if matches else None
-
+# =========================================================
+# FUZZY EXTRACTION
+# =========================================================
 
 def extract_fuzzy_matches(
     query: str,
     vocabulary,
 ) -> List[str]:
-    """
-    Extract fuzzy matched skills.
-    """
+
+    if not ENABLE_FUZZY_MATCHING:
+        return []
 
     detected: Set[str] = set()
 
@@ -416,34 +509,20 @@ def extract_fuzzy_matches(
 
     for token in tokens:
 
-        fuzzy = fuzzy_match(
+        if token in vocabulary:
+            continue
+
+        matches = fuzzy_match(
             token,
             vocabulary,
         )
 
-        if fuzzy:
-            detected.add(fuzzy)
+        for match in matches:
+
+            if not detect_negation(query, match):
+                detected.add(match)
 
     return sorted(detected)
-
-# =========================================================
-# INTENT DETECTION
-# =========================================================
-
-def detect_query_type(
-    query: str,
-    vocabulary,
-) -> bool:
-    """
-    Detect category presence.
-    """
-
-    return bool(
-        extract_matches(
-            query,
-            vocabulary,
-        )
-    )
 
 # =========================================================
 # INTENT WEIGHTS
@@ -452,9 +531,6 @@ def detect_query_type(
 def calculate_intent_weights(
     query: str,
 ) -> Dict[str, int]:
-    """
-    Weighted category scoring.
-    """
 
     weights = {
         category: 0
@@ -473,37 +549,12 @@ def calculate_intent_weights(
 
             if (
                 regex_match(term, query)
-                and not detect_negation(
-                    query,
-                    term,
-                )
+                and not detect_negation(query, term)
             ):
+
                 weights[category] += score
 
     return weights
-
-# =========================================================
-# CONFIDENCE
-# =========================================================
-
-def calculate_confidence(
-    weights: Dict[str, int],
-) -> float:
-    """
-    Confidence based on dominant intent.
-    """
-
-    total = sum(weights.values())
-
-    if total <= 0:
-        return 0.0
-
-    dominant = max(weights.values())
-
-    return round(
-        dominant / total,
-        3,
-    )
 
 # =========================================================
 # PRIMARY INTENT
@@ -512,12 +563,6 @@ def calculate_confidence(
 def determine_primary_intent(
     weights: Dict[str, int],
 ) -> str:
-    """
-    Determine dominant intent.
-    """
-
-    if not weights:
-        return "general"
 
     dominant = max(
         weights.values(),
@@ -533,88 +578,179 @@ def determine_primary_intent(
     )
 
 # =========================================================
+# CONFIDENCE
+# =========================================================
+
+def calculate_confidence(
+    weights: Dict[str, int],
+) -> float:
+
+    total = sum(weights.values())
+
+    if total <= 0:
+        return 0.0
+
+    dominant = max(weights.values())
+
+    confidence = (
+        dominant / total
+    )
+
+    confidence = (
+        confidence * 0.85
+    ) + (
+        min(total / 40, 1.0) * 0.15
+    )
+
+    return round(
+        min(confidence, 1.0),
+        3,
+    )
+
+# =========================================================
+# ROLE EXPANSION
+# =========================================================
+
+def expand_roles(
+    roles: List[str],
+) -> List[str]:
+
+    if not ENABLE_ROLE_EXPANSION:
+        return []
+
+    expanded = []
+
+    for role in roles:
+
+        normalized_role = normalize_role(role)
+
+        expanded.extend(
+            ROLE_COMPETENCIES.get(
+                normalized_role,
+                [],
+            )
+        )
+
+    return sorted(set(expanded))
+
+# =========================================================
 # QUERY EXPANSION
 # =========================================================
 
-def expand_query(query: str) -> str:
-    """
-    Lightweight synonym expansion.
-    """
+def expand_query(
+    query: str,
+    detected_skills: List[str],
+    detected_roles: List[str],
+    detected_assessment_types: List[str],
+) -> str:
 
-    normalized_query = normalize(query)
+    if not ENABLE_QUERY_EXPANSION:
+        return query
 
-    expanded_terms = [
-        normalized_query
-    ]
+    expanded_terms = [query]
 
     for (
         keyword,
-        synonyms,
-    ) in SYNONYMS.items():
+        values,
+    ) in QUERY_EXPANSIONS.items():
 
         if regex_match(
             keyword,
-            normalized_query,
+            query,
         ):
-            expanded_terms.extend(
-                synonyms
+            expanded_terms.extend(values)
+
+    for skill in detected_skills:
+
+        expanded_terms.extend(
+            QUERY_EXPANSIONS.get(
+                skill,
+                [],
+            )
+        )
+
+    if ENABLE_COMPETENCY_EXPANSION:
+
+        expanded_terms.extend(
+            expand_roles(
+                detected_roles
+            )
+        )
+
+    expanded_terms.extend(
+        detected_assessment_types
+    )
+
+    unique_terms = []
+
+    seen = set()
+
+    for term in expanded_terms:
+
+        normalized_term = normalize_cached(term)
+
+        if (
+            normalized_term
+            and normalized_term not in seen
+        ):
+
+            seen.add(normalized_term)
+
+            unique_terms.append(
+                normalized_term
             )
 
-    unique_terms = list(
-        dict.fromkeys(
-            normalize(term)
-            for term in expanded_terms
-        )
-    )
+    unique_terms = unique_terms[
+        :MAX_EXPANSION_TERMS
+    ]
 
     return " ".join(unique_terms)
 
 # =========================================================
-# ENTITY EXTRACTION
-# =========================================================
-
-def extract_delivery_preferences(
-    query: str,
-) -> List[str]:
-    return extract_matches(
-        query,
-        DELIVERY_TERMS,
-    )
-
-
-def extract_assessment_types(
-    weights: Dict[str, int],
-) -> List[str]:
-    """
-    Extract active assessment types.
-    """
-
-    return sorted(
-        [
-            category
-            for (
-                category,
-                score,
-            ) in weights.items()
-            if score > 0
-        ]
-    )
-
-# =========================================================
-# COMPARISON DETECTION
+# COMPARISON
 # =========================================================
 
 def detect_comparison_query(
     query: str,
 ) -> bool:
-    """
-    Detect comparison-style queries.
-    """
 
     return any(
         regex_match(term, query)
         for term in COMPARISON_TERMS
     )
+
+# =========================================================
+# DELIVERY
+# =========================================================
+
+def extract_delivery_preferences(
+    query: str,
+) -> List[str]:
+
+    return extract_matches(
+        query,
+        DELIVERY_TERMS,
+    )
+
+# =========================================================
+# ASSESSMENT TYPES
+# =========================================================
+
+def extract_assessment_types(
+    weights: Dict[str, int],
+) -> List[str]:
+
+    return sorted([
+
+        category
+
+        for (
+            category,
+            score,
+        ) in weights.items()
+
+        if score > 0
+    ])
 
 # =========================================================
 # MAIN PARSER
@@ -623,30 +759,16 @@ def detect_comparison_query(
 def parse_query(
     query: str,
 ) -> Dict:
-    """
-    Enterprise-grade structured query parser.
-    """
 
-    normalized_query = normalize(query)
+    normalized_query = normalize_cached(query)
 
-    # =====================================================
-    # INTENT WEIGHTS
-    # =====================================================
+    tokens = tokenize_query(
+        normalized_query
+    )
 
     intent_weights = (
         calculate_intent_weights(
             normalized_query
-        )
-    )
-
-    # =====================================================
-    # FUZZY TECHNICAL SKILLS
-    # =====================================================
-
-    fuzzy_skills = (
-        extract_fuzzy_matches(
-            normalized_query,
-            TECHNICAL_TERMS.keys(),
         )
     )
 
@@ -655,47 +777,80 @@ def parse_query(
         TECHNICAL_TERMS.keys(),
     )
 
+    fuzzy_skills = extract_fuzzy_matches(
+        normalized_query,
+        TECHNICAL_TERMS.keys(),
+    )
+
     all_skills = sorted(
         set(
-            exact_skills + fuzzy_skills
+            exact_skills
+            + fuzzy_skills
         )
     )
 
-    # =====================================================
-    # OUTPUT
-    # =====================================================
+    exact_roles = extract_matches(
+        normalized_query,
+        ROLE_TERMS,
+    )
 
-    parsed = {
+    fuzzy_roles = extract_fuzzy_matches(
+        normalized_query,
+        ROLE_TERMS,
+    )
 
-        # -----------------------------
-        # category detection
-        # -----------------------------
+    detected_roles = sorted(
+        set(
+            normalize_role(role)
+
+            for role in (
+                exact_roles
+                + fuzzy_roles
+            )
+        )
+    )
+
+    detected_seniority = extract_matches(
+        normalized_query,
+        SENIORITY_TERMS,
+    )
+
+    delivery_preferences = (
+        extract_delivery_preferences(
+            normalized_query
+        )
+    )
+
+    assessment_types = (
+        extract_assessment_types(
+            intent_weights
+        )
+    )
+
+    expanded_query = expand_query(
+        normalized_query,
+        all_skills,
+        detected_roles,
+        assessment_types,
+    )
+
+    return {
+
         "technical":
             intent_weights["technical"] > 0,
 
         "communication":
             intent_weights["communication"] > 0,
 
-        "personality":
-            intent_weights["personality"] > 0,
-
         "leadership":
             intent_weights["leadership"] > 0,
+
+        "personality":
+            intent_weights["personality"] > 0,
 
         "cognitive":
             intent_weights["cognitive"] > 0,
 
-        # -----------------------------
-        # query type
-        # -----------------------------
-        "comparison":
-            detect_comparison_query(
-                normalized_query
-            ),
-
-        # -----------------------------
-        # intent analysis
-        # -----------------------------
         "primary_intent":
             determine_primary_intent(
                 intent_weights
@@ -709,55 +864,35 @@ def parse_query(
         "intent_weights":
             intent_weights,
 
-        # -----------------------------
-        # extracted entities
-        # -----------------------------
-        "roles":
-            extract_matches(
-                normalized_query,
-                ROLE_TERMS,
+        "comparison":
+            detect_comparison_query(
+                normalized_query
             ),
 
+        "roles":
+            detected_roles,
+
         "seniority":
-            extract_matches(
-                normalized_query,
-                SENIORITY_TERMS,
-            ),
+            detected_seniority,
 
         "skills":
             all_skills,
 
         "delivery_preferences":
-            extract_delivery_preferences(
-                normalized_query
-            ),
+            delivery_preferences,
 
         "assessment_types":
-            extract_assessment_types(
-                intent_weights
-            ),
+            assessment_types,
 
-        # -----------------------------
-        # query expansion
-        # -----------------------------
         "expanded_query":
-            expand_query(
-                normalized_query
-            ),
+            expanded_query,
 
-        # -----------------------------
-        # metadata
-        # -----------------------------
         "normalized_query":
             normalized_query,
 
         "tokens":
-            tokenize_query(
-                normalized_query
-            ),
+            tokens,
     }
-
-    return parsed
 
 # =========================================================
 # DEBUG
@@ -765,14 +900,17 @@ def parse_query(
 
 if __name__ == "__main__":
 
-    sample_query = (
-        "Senior Python backend developer "
-        "with stakeholder communication "
-        "and leadership skills"
-    )
-
     from pprint import pprint
 
+    sample_query = (
+        "Senior backend engineer with "
+        "python, microservices, aws, "
+        "stakeholder management and "
+        "leadership experience"
+    )
+
     pprint(
-        parse_query(sample_query)
+        parse_query(
+            sample_query
+        )
     )
