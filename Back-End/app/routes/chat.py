@@ -408,6 +408,46 @@ def build_chat_response(
 
 
 # =========================================================
+# OFFTOPIC RESPONSE
+# =========================================================
+
+
+def build_offtopic_response() -> str:
+
+    return (
+        "Please ask queries related to SHL assessments, "
+        "candidate evaluation, hiring assessments, "
+        "technical screening, personality testing, "
+        "leadership evaluation, or role-based hiring.\n\n"
+        "Example queries:\n"
+        "- Python developer assessment\n"
+        "- Cognitive test for analysts\n"
+        "- Leadership assessment for managers\n"
+        "- Java backend developer hiring test"
+    )
+
+
+# =========================================================
+# EMPTY SEARCH RESPONSE
+# =========================================================
+
+
+def build_empty_search_response() -> str:
+
+    return (
+        "I could not identify enough hiring or "
+        "assessment-related information.\n\n"
+        "Please include:\n"
+        "- Role\n"
+        "- Skills\n"
+        "- Seniority\n"
+        "- Assessment type\n\n"
+        "Example:\n"
+        "'Senior Python Developer technical assessment'"
+    )
+
+
+# =========================================================
 # CHAT ENDPOINT
 # =========================================================
 
@@ -433,6 +473,10 @@ async def chat(
         # =====================================================
 
         if not request.messages:
+
+            logger.warning(
+                "Empty messages received"
+            )
 
             return build_chat_response(
                 reply=(
@@ -462,7 +506,15 @@ async def chat(
             latest_user_message,
         )
 
+        # =====================================================
+        # EMPTY USER MESSAGE
+        # =====================================================
+
         if not latest_user_message:
+
+            logger.warning(
+                "User message empty"
+            )
 
             return build_chat_response(
                 reply=(
@@ -505,18 +557,17 @@ async def chat(
         )
 
         # =====================================================
-        # OFFTOPIC
+        # STRICT OFFTOPIC FILTER
         # =====================================================
 
         if intent == "offtopic":
 
+            logger.info(
+                "Offtopic query blocked"
+            )
+
             return build_chat_response(
-                reply=(
-                    "I can help with SHL assessment "
-                    "recommendations, hiring evaluations, "
-                    "candidate assessment strategies, "
-                    "and assessment comparisons."
-                ),
+                reply=build_offtopic_response(),
                 recommendations=[],
                 end_of_conversation=False,
             )
@@ -533,6 +584,24 @@ async def chat(
             "Extracted context: %s",
             context,
         )
+
+        # =====================================================
+        # SECONDARY OFFTOPIC PROTECTION
+        # =====================================================
+
+        if context.get(
+            "intent"
+        ) == "offtopic":
+
+            logger.info(
+                "Context marked query as offtopic"
+            )
+
+            return build_chat_response(
+                reply=build_offtopic_response(),
+                recommendations=[],
+                end_of_conversation=False,
+            )
 
         # =====================================================
         # CLARIFICATION
@@ -552,6 +621,33 @@ async def chat(
             )
         )
 
+        clarification_offtopic = (
+            clarification.get(
+                "offtopic",
+                False,
+            )
+        )
+
+        # =====================================================
+        # OFFTOPIC CLARIFICATION
+        # =====================================================
+
+        if clarification_offtopic:
+
+            logger.info(
+                "Clarification returned offtopic"
+            )
+
+            return build_chat_response(
+                reply=build_offtopic_response(),
+                recommendations=[],
+                end_of_conversation=False,
+            )
+
+        # =====================================================
+        # NORMAL CLARIFICATION
+        # =====================================================
+
         if clarification_needed:
 
             question = (
@@ -561,6 +657,10 @@ async def chat(
                         [],
                     )
                 )
+            )
+
+            logger.info(
+                "Clarification requested"
             )
 
             return build_chat_response(
@@ -588,14 +688,18 @@ async def chat(
             search_query,
         )
 
+        # =====================================================
+        # EMPTY SEARCH QUERY
+        # =====================================================
+
         if not search_query:
 
+            logger.warning(
+                "Search query empty"
+            )
+
             return build_chat_response(
-                reply=(
-                    "Please provide more details "
-                    "about the role, technical skills, "
-                    "or assessment objectives."
-                ),
+                reply=build_empty_search_response(),
                 recommendations=[],
                 end_of_conversation=False,
             )
@@ -626,6 +730,10 @@ async def chat(
 
         if not raw_results:
 
+            logger.warning(
+                "No retrieval results"
+            )
+
             return build_chat_response(
                 reply=(
                     "I could not find sufficiently "
@@ -639,6 +747,10 @@ async def chat(
         # =====================================================
         # GENERATE RECOMMENDATIONS
         # =====================================================
+
+        logger.info(
+            "Generating recommendations"
+        )
 
         recommendations = await run_in_threadpool(
             generate_recommendations,
@@ -670,10 +782,14 @@ async def chat(
         )
 
         # =====================================================
-        # EMPTY RESULTS
+        # FINAL EMPTY CHECK
         # =====================================================
 
         if not recommendations:
+
+            logger.warning(
+                "Recommendations empty after normalization"
+            )
 
             return build_chat_response(
                 reply=(
@@ -739,11 +855,17 @@ async def chat(
                 intent,
             )
 
+            # =================================================
+            # EMPTY RESPONSE PROTECTION
+            # =================================================
+
             if not reply:
 
                 raise ValueError(
                     "Empty LLM response"
                 )
+
+            reply = str(reply).strip()
 
         except Exception as error:
 
@@ -793,6 +915,11 @@ async def chat(
         logger.info(
             "Response time: %sms",
             response_time_ms,
+        )
+
+        logger.info(
+            "Final recommendation count: %s",
+            len(recommendations),
         )
 
         # =====================================================

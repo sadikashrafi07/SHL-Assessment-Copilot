@@ -1,17 +1,22 @@
+# =========================================================
+# app/services/guardrails.py
+# Production-Grade Guardrails Engine
+# FULLY FIXED VERSION
+# =========================================================
+
+from __future__ import annotations
+
 import logging
 import re
+from typing import Iterable
 
-from app.utils.helpers import (
-    normalize_text
-)
-
+from app.utils.helpers import normalize_text
 
 # =========================================================
 # LOGGER
 # =========================================================
 
 logger = logging.getLogger(__name__)
-
 
 # =========================================================
 # LIMITS
@@ -20,11 +25,8 @@ logger = logging.getLogger(__name__)
 MAX_QUERY_LENGTH = 2000
 MIN_QUERY_LENGTH = 2
 
-
 # =========================================================
 # BLOCKED SECURITY PATTERNS
-# Only malicious intent phrases.
-# Avoid blocking cybersecurity hiring queries.
 # =========================================================
 
 BLOCKED_PATTERNS = [
@@ -76,32 +78,57 @@ BLOCKED_PATTERNS = [
     "bypass law",
     "commit fraud",
     "build bomb",
-    "terrorist attack"
+    "terrorist attack",
 ]
 
-
 # =========================================================
-# OFFTOPIC PATTERNS
-# Keep only clearly irrelevant topics.
+# HARD OFFTOPIC PATTERNS
 # =========================================================
 
 OFFTOPIC_PATTERNS = [
 
-    "legal advice",
-    "lawsuit",
-    "court case",
+    # Food
+    "biriyani",
+    "biryani",
+    "pizza",
+    "burger",
+    "recipe",
 
-    "medical diagnosis",
-    "disease treatment",
+    # Entertainment
+    "movie",
+    "cinema",
+    "song",
+    "music",
 
+    # Travel
+    "travel",
+    "trip",
+    "tourism",
+
+    # Finance
+    "crypto",
+    "bitcoin",
+    "investment",
+    "stock market",
+
+    # Politics
     "politics",
     "election",
 
-    "movie recommendation",
-    "gaming pc",
-    "travel itinerary"
-]
+    # Medical
+    "medical diagnosis",
+    "disease treatment",
 
+    # Shopping
+    "iphone",
+    "laptop price",
+
+    # Misc
+    "gaming",
+    "pubg",
+    "instagram",
+    "whatsapp",
+]
 
 # =========================================================
 # SHL DOMAIN KEYWORDS
@@ -109,47 +136,111 @@ OFFTOPIC_PATTERNS = [
 
 SHL_SCOPE_KEYWORDS = [
 
+    # Core SHL
+    "shl",
+    "assessment",
+    "assessment recommendation",
+    "assessment test",
+    "assessment solution",
+    "assessment selection",
+
+    # Hiring
+    "hiring",
+    "recruitment",
+    "candidate",
+    "interview",
+    "job role",
+    "job assessment",
+
+    # Test Categories
+    "technical",
+    "coding",
+    "cognitive",
+    "behavioral",
+    "behavioural",
+    "personality",
+    "leadership",
+    "communication",
+    "aptitude",
+    "situational",
+
+    # Roles
+    "developer",
+    "engineer",
+    "manager",
+    "analyst",
+    "architect",
+    "consultant",
+    "scientist",
+
+    # Technologies
+    "python",
+    "java",
+    "javascript",
+    "react",
+    "angular",
+    "sql",
+    "aws",
+    "cloud",
+    "docker",
+    "kubernetes",
+    "devops",
+    "backend",
+    "frontend",
+    "full stack",
+
+    # SHL Products
+    "opq",
+    "gsa",
+]
+
+# =========================================================
+# MINIMUM VALID DOMAIN TERMS
+# =========================================================
+
+VALID_DOMAIN_TERMS = {
+
     "assessment",
     "test",
     "candidate",
     "hiring",
     "recruitment",
-
-    "personality",
     "technical",
-    "cognitive",
+    "coding",
     "behavioral",
-    "communication",
+    "behavioural",
+    "personality",
     "leadership",
-
+    "communication",
+    "cognitive",
+    "aptitude",
     "developer",
     "engineer",
     "manager",
     "analyst",
-    "consultant",
-
-    "java",
     "python",
+    "java",
+    "react",
+    "sql",
     "cloud",
-    "software",
-    "coding",
-
-    "opq",
-    "gsa",
-    "shl"
-]
-
+    "docker",
+    "aws",
+    "backend",
+    "frontend",
+    "devops",
+    "shl",
+}
 
 # =========================================================
-# SAFE REGEX PATTERN CHECK
+# SAFE REGEX CHECK
 # =========================================================
 
 def regex_contains_pattern(
-    text,
-    patterns
-):
+    text: str,
+    patterns: Iterable[str],
+) -> bool:
     """
-    Exact normalized pattern match.
+    Safe normalized whole-word pattern matching.
     """
 
     if not text:
@@ -157,33 +248,61 @@ def regex_contains_pattern(
 
     for pattern in patterns:
 
-        escaped_pattern = re.escape(
-            normalize_text(pattern)
+        normalized_pattern = normalize_text(pattern)
+
+        escaped = re.escape(
+            normalized_pattern
         )
 
         if re.search(
-            rf"\b{escaped_pattern}\b",
-            text
+            rf"\b{escaped}\b",
+            text,
+            flags=re.IGNORECASE,
         ):
             return True
 
     return False
 
-
 # =========================================================
-# DOMAIN CHECK
+# TOKENIZER
 # =========================================================
 
-def appears_in_scope(text):
+def tokenize(text: str) -> list[str]:
     """
-    Determines whether query
-    appears related to SHL domain.
+    Lightweight tokenizer.
+    """
+
+    if not text:
+        return []
+
+    return re.findall(
+        r"[a-zA-Z0-9\+\#\.]+",
+        text.lower(),
+    )
+
+# =========================================================
+# DOMAIN VALIDATION
+# =========================================================
+
+def appears_in_scope(
+    text: str,
+) -> bool:
+    """
+    Strict SHL domain validation.
+    Prevents random/offtopic queries
+    from reaching retrieval pipeline.
     """
 
     if not text:
         return False
 
-    match_count = 0
+    text = normalize_text(text)
+
+    # =====================================================
+    # DIRECT KEYWORD MATCH
+    # =====================================================
+
+    keyword_matches = 0
 
     for keyword in SHL_SCOPE_KEYWORDS:
 
@@ -193,20 +312,37 @@ def appears_in_scope(text):
 
         if re.search(
             rf"\b{escaped}\b",
-            text
+            text,
+            flags=re.IGNORECASE,
         ):
-            match_count += 1
+            keyword_matches += 1
 
-    return match_count >= 1
+    if keyword_matches >= 1:
+        return True
 
+    # =====================================================
+    # TOKEN VALIDATION
+    # =====================================================
+
+    tokens = tokenize(text)
+
+    valid_matches = sum(
+        1
+        for token in tokens
+        if token in VALID_DOMAIN_TERMS
+    )
+
+    return valid_matches >= 1
 
 # =========================================================
 # MAIN SAFETY CHECK
 # =========================================================
 
-def is_safe_query(query):
+def is_safe_query(
+    query: str,
+) -> bool:
     """
-    Validates whether query is safe.
+    Main validation entrypoint.
     """
 
     try:
@@ -220,34 +356,41 @@ def is_safe_query(query):
 
         if not isinstance(
             query,
-            str
+            str,
         ):
             return False
 
         # =====================================
-        # EMPTY QUERY
-        # =====================================
-
-        if query == "":
-            return True
-
-        # =====================================
-        # UNICODE CLEANING
+        # CLEAN UTF
         # =====================================
 
         query = (
             query.encode(
                 "utf-8",
-                errors="ignore"
+                errors="ignore",
             )
             .decode("utf-8")
         )
 
         # =====================================
+        # NORMALIZE
+        # =====================================
+
+        normalized_query = normalize_text(
+            query
+        )
+
+        if not normalized_query:
+            return False
+
+        # =====================================
         # LENGTH CHECK
         # =====================================
 
-        if len(query) > MAX_QUERY_LENGTH:
+        if (
+            len(normalized_query)
+            > MAX_QUERY_LENGTH
+        ):
 
             logger.warning(
                 "Blocked oversized query."
@@ -255,34 +398,28 @@ def is_safe_query(query):
 
             return False
 
-        # =====================================
-        # NORMALIZE
-        # =====================================
-
-        normalized_query = (
-            normalize_text(query)
-        )
-
-        if not normalized_query:
-            return False
-
         if (
             len(normalized_query)
             < MIN_QUERY_LENGTH
         ):
+
+            logger.warning(
+                "Blocked short query."
+            )
+
             return False
 
         # =====================================
-        # BLOCKED SECURITY CHECK
+        # SECURITY CHECK
         # =====================================
 
         if regex_contains_pattern(
             normalized_query,
-            BLOCKED_PATTERNS
+            BLOCKED_PATTERNS,
         ):
 
             logger.warning(
-                "Blocked unsafe query."
+                "Blocked malicious query."
             )
 
             return False
@@ -293,7 +430,7 @@ def is_safe_query(query):
 
         if regex_contains_pattern(
             normalized_query,
-            OFFTOPIC_PATTERNS
+            OFFTOPIC_PATTERNS,
         ):
 
             logger.warning(
@@ -307,21 +444,22 @@ def is_safe_query(query):
     except Exception as error:
 
         logger.exception(
-            f"Guardrail validation failed: "
-            f"{error}"
+            "Guardrail validation failed: %s",
+            error,
         )
 
         return False
-
 
 # =========================================================
 # SHL DOMAIN VALIDATION
 # =========================================================
 
-def is_shl_related_query(query):
+def is_shl_related_query(
+    query: str,
+) -> bool:
     """
-    Determines whether query
-    belongs to SHL domain.
+    Determines whether query belongs
+    to SHL assessment recommendation domain.
     """
 
     try:
@@ -329,9 +467,22 @@ def is_shl_related_query(query):
         if not query:
             return False
 
-        normalized_query = (
-            normalize_text(query)
+        normalized_query = normalize_text(
+            query
         )
+
+        if not normalized_query:
+            return False
+
+        # =====================================================
+        # BLOCK OBVIOUS OFFTOPIC
+        # =====================================================
+
+        if regex_contains_pattern(
+            normalized_query,
+            OFFTOPIC_PATTERNS,
+        ):
+            return False
 
         return appears_in_scope(
             normalized_query
@@ -340,40 +491,34 @@ def is_shl_related_query(query):
     except Exception as error:
 
         logger.exception(
-            f"SHL scope validation failed: "
-            f"{error}"
+            "SHL scope validation failed: %s",
+            error,
         )
 
         return False
-
 
 # =========================================================
 # REFUSAL RESPONSE
 # =========================================================
 
-def refusal_response():
+def refusal_response() -> str:
 
     return (
-        "I can only assist with SHL "
-        "assessment recommendations, "
-        "assessment comparisons, "
-        "and SHL-related hiring "
-        "evaluation queries."
+        "I can only assist with SHL assessment "
+        "recommendations, hiring evaluations, "
+        "candidate assessment selection, "
+        "assessment comparisons, and recruitment-related queries."
     )
-
 
 # =========================================================
 # OFFTOPIC RESPONSE
 # =========================================================
 
-def offtopic_response():
+def offtopic_response() -> str:
 
     return (
-        "That request is outside "
-        "the scope of SHL assessment "
-        "recommendations. I can help "
-        "with technical, personality, "
-        "cognitive, leadership, and "
-        "communication assessment "
-        "selection."
+        "Please ask a SHL assessment-related query. "
+        "Example: 'Java developer technical assessment', "
+        "'leadership assessment for managers', "
+        "or 'compare cognitive and personality tests'."
     )

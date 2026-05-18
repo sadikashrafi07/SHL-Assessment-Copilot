@@ -47,15 +47,99 @@ END_WORDS = {
     "great",
 }
 
+# =========================================================
+# STRONG OFFTOPIC FILTERS
+# =========================================================
+
 OFFTOPIC_WORDS = {
+
+    # Finance
     "salary",
     "crypto",
+    "bitcoin",
     "investment",
+    "stock",
+    "trading",
+
+    # Politics
     "politics",
+    "government",
+    "election",
+
+    # Cyber
     "hack",
     "malware",
     "exploit",
     "torrent",
+
+    # Food
+    "biryani",
+    "biriyani",
+    "pizza",
+    "burger",
+    "food",
+
+    # Casual
+    "movie",
+    "music",
+    "song",
+    "cricket",
+    "football",
+    "relationship",
+    "girlfriend",
+    "boyfriend",
+
+    # Random
+    "weather",
+    "tourism",
+    "travel",
+    "hotel",
+}
+
+# =========================================================
+# DOMAIN KEYWORDS
+# =========================================================
+
+DOMAIN_KEYWORDS = {
+
+    # Hiring
+    "assessment",
+    "assessment test",
+    "hiring",
+    "recruitment",
+    "candidate",
+    "interview",
+    "job",
+    "role",
+    "position",
+
+    # Assessment Types
+    "technical assessment",
+    "coding assessment",
+    "personality assessment",
+    "leadership assessment",
+    "cognitive assessment",
+    "aptitude test",
+
+    # Roles
+    "developer",
+    "engineer",
+    "manager",
+    "architect",
+    "analyst",
+    "designer",
+
+    # Skills
+    "python",
+    "java",
+    "sql",
+    "aws",
+    "react",
+    "docker",
+    "leadership",
+    "communication",
+    "aptitude",
+    "cognitive",
 }
 
 # =========================================================
@@ -294,6 +378,57 @@ def normalize_text(text: Any) -> str:
     return text.strip()
 
 # =========================================================
+# DOMAIN VALIDATION
+# =========================================================
+
+def is_relevant_query(
+    text: str,
+) -> bool:
+    """
+    Validate whether query belongs to
+    SHL assessment recommendation domain.
+    """
+
+    text = normalize_text(text)
+
+    if not text:
+        return False
+
+    # =====================================================
+    # HARDCODED OFFTOPIC FILTER
+    # =====================================================
+
+    if any(
+        regex_match(word, text)
+        for word in OFFTOPIC_WORDS
+    ):
+        return False
+
+    # =====================================================
+    # DOMAIN SIGNALS
+    # =====================================================
+
+    role_matches = extract_roles(text)
+
+    skill_matches = extract_skills(text)
+
+    assessment_matches = (
+        extract_assessment_types(text)
+    )
+
+    keyword_matches = any(
+        regex_match(word, text)
+        for word in DOMAIN_KEYWORDS
+    )
+
+    return bool(
+        role_matches
+        or skill_matches
+        or assessment_matches
+        or keyword_matches
+    )
+
+# =========================================================
 # MESSAGE HELPERS
 # =========================================================
 
@@ -362,7 +497,7 @@ def detect_intent(
     messages: list[Any],
 ) -> str:
     """
-    Detect conversational intent.
+    Detect conversational intent safely.
     """
 
     latest = normalize_text(
@@ -373,13 +508,10 @@ def detect_intent(
         return "recommendation"
 
     # =====================================================
-    # OFFTOPIC
+    # DOMAIN VALIDATION
     # =====================================================
 
-    if any(
-        regex_match(word, latest)
-        for word in OFFTOPIC_WORDS
-    ):
+    if not is_relevant_query(latest):
         return "offtopic"
 
     # =====================================================
@@ -614,10 +746,6 @@ def extract_context(
 
     roles = extract_roles(text)
 
-    # =====================================================
-    # AUTO ROLE INFERENCE
-    # =====================================================
-
     if (
         not roles
         and regex_match(
@@ -627,15 +755,7 @@ def extract_context(
     ):
         roles.append("data scientist")
 
-    # =====================================================
-    # SKILLS
-    # =====================================================
-
     skills = extract_skills(text)
-
-    # =====================================================
-    # FOCUS FLAGS
-    # =====================================================
 
     leadership_required = any(
         regex_match(term, text)
@@ -680,10 +800,6 @@ def extract_context(
 
     context = {
 
-        # =================================================
-        # PRIMARY SIGNALS
-        # =================================================
-
         "roles":
             deduplicate(roles),
 
@@ -696,19 +812,11 @@ def extract_context(
         "assessment_types":
             extract_assessment_types(text),
 
-        # =================================================
-        # CONSTRAINTS
-        # =================================================
-
         "duration_limit":
             extract_duration_constraint(text),
 
         "experience":
             extract_experience(text),
-
-        # =================================================
-        # FLAGS
-        # =================================================
 
         "remote_required":
             regex_match(
@@ -734,16 +842,8 @@ def extract_context(
         "cognitive_required":
             cognitive_required,
 
-        # =================================================
-        # COMPARISON
-        # =================================================
-
         "comparison_targets":
             [],
-
-        # =================================================
-        # RAW
-        # =================================================
 
         "raw_query":
             latest_message,
@@ -751,10 +851,6 @@ def extract_context(
         "intent":
             intent,
     }
-
-    # =====================================================
-    # COMPARISON EXTRACTION
-    # =====================================================
 
     if intent == "comparison":
 
@@ -783,6 +879,22 @@ def should_ask_clarification(
     Determine whether clarification is needed.
     """
 
+    # =====================================================
+    # OFFTOPIC
+    # =====================================================
+
+    if context.get("intent") == "offtopic":
+
+        return {
+            "needed": False,
+            "missing_fields": [],
+            "offtopic": True,
+        }
+
+    # =====================================================
+    # VALID SIGNALS
+    # =====================================================
+
     has_signal = any(
         [
             context.get("roles"),
@@ -800,6 +912,7 @@ def should_ask_clarification(
         return {
             "needed": False,
             "missing_fields": [],
+            "offtopic": False,
         }
 
     # =====================================================
@@ -811,6 +924,7 @@ def should_ask_clarification(
         return {
             "needed": False,
             "missing_fields": [],
+            "offtopic": False,
         }
 
     return {
@@ -819,15 +933,35 @@ def should_ask_clarification(
             "role",
             "skills",
         ],
+        "offtopic": False,
     }
 
 
 def generate_clarification_question(
     missing_fields: list[str],
+    offtopic: bool = False,
 ) -> str:
     """
-    Generate clarification question.
+    Generate clarification question safely.
     """
+
+    # =====================================================
+    # OFFTOPIC RESPONSE
+    # =====================================================
+
+    if offtopic:
+
+        return (
+            "Please ask queries related to "
+            "SHL assessments, hiring roles, "
+            "skills, or competency evaluation. "
+            "Examples: Python developer assessment, "
+            "leadership assessment, cognitive test."
+        )
+
+    # =====================================================
+    # NORMAL CLARIFICATION
+    # =====================================================
 
     return (
         "Could you share the target role, "
@@ -847,19 +981,14 @@ def build_search_query(
     Build optimized retrieval query.
     """
 
-    parts: list[str] = []
+    if context.get("intent") == "offtopic":
+        return ""
 
-    # =====================================================
-    # ROLES
-    # =====================================================
+    parts: list[str] = []
 
     parts.extend(
         context.get("roles", [])
     )
-
-    # =====================================================
-    # SENIORITY
-    # =====================================================
 
     if context.get("seniority"):
 
@@ -867,17 +996,9 @@ def build_search_query(
             context["seniority"]
         )
 
-    # =====================================================
-    # SKILLS
-    # =====================================================
-
     parts.extend(
         context.get("skills", [])
     )
-
-    # =====================================================
-    # ASSESSMENT TYPES
-    # =====================================================
 
     parts.extend(
         context.get(
@@ -885,10 +1006,6 @@ def build_search_query(
             [],
         )
     )
-
-    # =====================================================
-    # FOCUS SIGNALS
-    # =====================================================
 
     if context.get(
         "leadership_required"
@@ -910,10 +1027,6 @@ def build_search_query(
     ):
         parts.append("cognitive")
 
-    # =====================================================
-    # DELIVERY
-    # =====================================================
-
     if context.get(
         "adaptive_required"
     ):
@@ -923,10 +1036,6 @@ def build_search_query(
         "remote_required"
     ):
         parts.append("remote")
-
-    # =====================================================
-    # EXPERIENCE
-    # =====================================================
 
     if context.get("experience"):
 
@@ -963,10 +1072,17 @@ def detect_conversation_end(
         get_latest_user_message(messages)
     )
 
-    return bool(
-        recommendations
-        and any(
-            regex_match(word, latest)
-            for word in END_WORDS
-        )
-    )
+    if any(
+        regex_match(word, latest)
+        for word in END_WORDS
+    ):
+        return True
+
+    if (
+        not recommendations
+        and detect_intent(messages)
+        == "offtopic"
+    ):
+        return True
+
+    return False
